@@ -1,10 +1,15 @@
 /**
- * The host side of UCI over WASI: the seven WASI preview-1 calls a WASI build
- * imports (core/wasi.ts), answered on the thread that runs the engine, with stdin
- * fed through a ring in shared memory. One thread writes input into the ring:
- * stdin's reader under Bun and Node (main.ts), the page's messages in a browser.
- * The engine's thread reads it without returning to its event loop, so a `stop`
- * reaches a running search. Platform-neutral: no node: imports.
+ * The host side of UCI over WASI: the WASI preview-1 calls a WASI build imports,
+ * answered on the thread that runs the engine, with stdin fed through a ring in
+ * shared memory. One thread writes input into the ring: stdin's reader under Bun
+ * and Node (main.ts), the page's messages in a browser. The engine's thread reads
+ * it without returning to its event loop, so a `stop` reaches a running search.
+ * Platform-neutral: no node: imports.
+ *
+ * A module may rely on seven calls (core/wasi.ts imports exactly these). A libc
+ * or a Rust std imports more of preview 1 than it calls, so every other import
+ * gets a fixed answer (floorStubs), and a module that needs more than those
+ * answers does not run here.
  *
  * The layouts are WASI preview 1's (WebAssembly/WASI, legacy/preview1/docs.md).
  */
@@ -83,12 +88,16 @@ export class Exit extends Error {
 const ESUCCESS = 0;
 const EBADF = 8;
 const EINVAL = 28;
+const ENOSYS = 52;
+const ESPIPE = 70;
+const CHARACTER_DEVICE = 2;
+const PREVIEW1 = "wasi_snapshot_preview1";
 const EVENT_CLOCK = 0;
 const EVENT_FD_READ = 1;
 const HANGUP = 1;
 
 /**
- * The `wasi_snapshot_preview1` imports for one instance. `args` are the command
+ * The seven `wasi_snapshot_preview1` calls for one instance. `args` are the command
  * line, the program's name first; `write` receives each fd_write's bytes for fd 1
  * (stdout) or 2 (stderr). Bind the instance's memory with `setMemory` before
  * calling `_start`.
@@ -208,8 +217,53 @@ export function wasiImports(ring: Ring, args: string[], write: (fd: number, byte
       throw new Exit(code);
     },
   };
+  /**
+   * The fixed answers to the rest of preview 1. Stdin, stdout and stderr are pipes
+   * with no file system behind them, the environment is empty, and random bytes
+   * come from a fixed seed, so two runs of a module are the same run.
+   */
+  let seed = 0x9e3779b9;
+  const floorStubs: Record<string, (...a: number[]) => number> = {
+    fd_fdstat_get(fd: number, out: number): number {
+      if (fd > 2) return EBADF;
+      mem();
+      bytes.fill(0, out, out + 8);
+      bytes[out] = CHARACTER_DEVICE;
+      // every right, base and inheriting: with the seek right set, a libc does not take the fd for a terminal
+      bytes.fill(0xff, out + 8, out + 24);
+      return ESUCCESS;
+    },
+    fd_prestat_get: () => EBADF,
+    fd_seek: () => ESPIPE,
+    environ_sizes_get(count: number, size: number): number {
+      mem();
+      view.setUint32(count, 0, true);
+      view.setUint32(size, 0, true);
+      return ESUCCESS;
+    },
+    environ_get: () => ESUCCESS,
+    random_get(buf: number, len: number): number {
+      mem();
+      for (let i = 0; i < len; i++) {
+        // xorshift32 (Marsaglia 2003)
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        bytes[buf + i] = seed;
+      }
+      return ESUCCESS;
+    },
+  };
   return {
-    imports: { wasi_snapshot_preview1: imports },
+    /** the import object for `module`: the seven calls, a fixed answer for each other preview-1 import, and an error for an import from anywhere else */
+    importsFor(module: WebAssembly.Module): WebAssembly.Imports {
+      const answers: Record<string, Function> = {};
+      for (const i of WebAssembly.Module.imports(module)) {
+        if (i.module !== PREVIEW1) throw new Error(`the module imports ${i.module}.${i.name}; a UCI over WASI host answers only ${PREVIEW1}`);
+        answers[i.name] = (imports as Record<string, Function>)[i.name] ?? floorStubs[i.name] ?? (() => ENOSYS);
+      }
+      return { [PREVIEW1]: answers };
+    },
     setMemory(m: WebAssembly.Memory) {
       memory = m;
     },
@@ -222,7 +276,8 @@ export function wasiImports(ring: Ring, args: string[], write: (fd: number, byte
  */
 export async function runWasi(wasm: BufferSource, ring: Ring, args: string[], write: (fd: number, bytes: Uint8Array) => void): Promise<number> {
   const wasi = wasiImports(ring, args, write);
-  const { instance } = await WebAssembly.instantiate(wasm, wasi.imports);
+  const module = await WebAssembly.compile(wasm);
+  const instance = await WebAssembly.instantiate(module, wasi.importsFor(module));
   wasi.setMemory(instance.exports.memory as WebAssembly.Memory);
   try {
     (instance.exports._start as () => void)();
