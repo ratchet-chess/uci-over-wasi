@@ -1,7 +1,7 @@
 //go:build wasip1
 
 // Package uciwasi is UCI over WASI's poll helper for a Go engine: the Go form
-// of shim/uci_wasi.h and shim/uci_wasi.c, with the same three calls and rules.
+// of helper/uci_wasi.h and helper/uci_wasi.c, with the same three calls and rules.
 //
 // A wasip1 build has one thread and no preemption, so a search goroutine starves
 // every other goroutine, and a blocking read of stdin halts the whole module. The
