@@ -22,8 +22,51 @@ const HEADER_BYTES = 16;
 /** the ring's data size, a power of two; a UCI line is far shorter */
 const RING_BYTES = 1 << 20;
 
+/** where an engine's stdin comes from, as the thread that runs the engine reads it */
+export interface Input {
+  /** bytes waiting */
+  available(): number;
+  /** whether input has ended */
+  closed(): boolean;
+  /** waits until input arrives or ends, at most `ms` milliseconds (Infinity for no limit) */
+  wait(ms: number): void;
+  /** moves up to `max` waiting bytes into `out` at `at`; returns how many */
+  read(out: Uint8Array, at: number, max: number): number;
+}
+
+/**
+ * Input known in full before the engine starts: its bytes, then the end of input.
+ * It needs no shared memory, so it serves a host that has none.
+ */
+export class Script implements Input {
+  private readonly bytes: Uint8Array;
+  private at = 0;
+
+  constructor(bytes: Uint8Array) {
+    this.bytes = bytes;
+  }
+
+  available(): number {
+    return this.bytes.length - this.at;
+  }
+
+  closed(): boolean {
+    return true;
+  }
+
+  /** nothing more arrives, so there is nothing to wait for; a module's sleep spins */
+  wait(_ms: number): void {}
+
+  read(out: Uint8Array, at: number, max: number): number {
+    const n = Math.min(max, this.available());
+    out.set(this.bytes.subarray(this.at, this.at + n), at);
+    this.at += n;
+    return n;
+  }
+}
+
 /** a single-writer, single-reader byte ring in a SharedArrayBuffer */
-export class Ring {
+export class Ring implements Input {
   readonly buffer: SharedArrayBuffer;
   private readonly head: Int32Array;
   private readonly data: Uint8Array;
@@ -102,7 +145,7 @@ const HANGUP = 1;
  * (stdout) or 2 (stderr). Bind the instance's memory with `setMemory` before
  * calling `_start`.
  */
-export function wasiImports(ring: Ring, args: string[], write: (fd: number, bytes: Uint8Array) => void) {
+export function wasiImports(ring: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void) {
   let memory: WebAssembly.Memory | undefined;
   let view = new DataView(new ArrayBuffer(0));
   let bytes = new Uint8Array(0);
@@ -271,13 +314,12 @@ export function wasiImports(ring: Ring, args: string[], write: (fd: number, byte
 }
 
 /**
- * Instantiates a WASI build and runs it to its end; returns the exit code. The
- * thread is the engine's for the whole run.
+ * Runs one instance of a compiled WASI build to its end; returns the exit code.
+ * The thread is the engine's for the whole run.
  */
-export async function runWasi(wasm: BufferSource, ring: Ring, args: string[], write: (fd: number, bytes: Uint8Array) => void): Promise<number> {
-  const wasi = wasiImports(ring, args, write);
-  const module = await WebAssembly.compile(wasm);
-  const instance = await WebAssembly.instantiate(module, wasi.importsFor(module));
+export function runModule(module: WebAssembly.Module, input: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void): number {
+  const wasi = wasiImports(input, args, write);
+  const instance = new WebAssembly.Instance(module, wasi.importsFor(module));
   wasi.setMemory(instance.exports.memory as WebAssembly.Memory);
   try {
     (instance.exports._start as () => void)();
@@ -286,4 +328,9 @@ export async function runWasi(wasm: BufferSource, ring: Ring, args: string[], wr
     if (e instanceof Exit) return e.code;
     throw e;
   }
+}
+
+/** Compiles a WASI build and runs it to its end; returns the exit code. */
+export async function runWasi(wasm: BufferSource, input: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void): Promise<number> {
+  return runModule(await WebAssembly.compile(wasm), input, args, write);
 }
