@@ -3,12 +3,13 @@
  * under host/wasi and the runtime that runs this script. It covers the polls
  * profile: a module that reads stdin from inside its search.
  *
- *   bun tools/wasi-check.ts <build.wasm> [--bench <nodes>] [--only <check>]
+ *   bun tools/wasi-check.ts <build.wasm> [--bench <nodes>] [--bench-args <args>] [--only <check>]
  *   bun tools/wasi-check.ts build/wasi/ratchet.wasm
  *
- * --bench runs the module's `bench` from its command line, once with stdin at
+ * --bench runs the module's bench from its command line, once with stdin at
  * its end and once with stdin open, and looks for <nodes> in each output: the
- * end of input must not cut a bench short.
+ * end of input must not cut a bench short. --bench-args is that command line,
+ * default `bench`.
  *
  * Each check starts a fresh process. It prints one line per check and exits 1
  * if any failed. Another engine's build runs only inside a container
@@ -121,11 +122,12 @@ const flag = (name: string) => {
   return i < 0 ? undefined : argv.splice(i, 2)[1];
 };
 const benchNodes = flag("--bench");
+const benchArgs = (flag("--bench-args") ?? "bench").split(" ");
 const only = flag("--only");
 const module = argv[0];
-if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--bench <nodes>] [--only <check>]");
+if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--bench <nodes>] [--bench-args <args>] [--only <check>]");
 
-/** starts the module and takes it through `uci` and `isready`; returns the run and whether it has a Ponder option */
+/** starts the module and takes it through `uci` and `isready` */
 async function start(): Promise<Run> {
   const run = new Run(module);
   run.send("uci");
@@ -196,7 +198,7 @@ const checks: Record<string, () => Promise<string | void>> = {
   /** at the end of input a bounded search finishes, prints its bestmove, and the module exits */
   async "eof-bounded"() {
     const run = new Run(module);
-    run.send("position startpos", "go movetime 1500");
+    run.send("uci", "position startpos", "go movetime 1500");
     const at = performance.now();
     run.end();
     const i = await run.expect("bestmove", START_MS);
@@ -224,7 +226,7 @@ const checks: Record<string, () => Promise<string | void>> = {
   /** the end of input that arrives with the `go` line itself still gets a bestmove */
   async "eof-with-go"() {
     const run = new Run(module);
-    run.send("position startpos", "go infinite");
+    run.send("uci", "position startpos", "go infinite");
     run.end();
     await run.expect("bestmove", START_MS);
     const code = await run.exit(HEAR_MS);
@@ -282,7 +284,7 @@ const checks: Record<string, () => Promise<string | void>> = {
   async bench() {
     if (!benchNodes) return "skipped: no --bench";
     for (const open of [false, true]) {
-      const run = new Run(module, ["bench"]);
+      const run = new Run(module, benchArgs);
       if (!open) run.end();
       await run.exit(30 * 60 * 1000);
       if (!new RegExp(`(^|\\D)${benchNodes}(\\D|$)`).test(run.output())) throw new Error(`no ${benchNodes} in the bench output with stdin ${open ? "open" : "at its end"}: ${run.output().trim().split("\n").slice(-2).join(" | ")}`);
