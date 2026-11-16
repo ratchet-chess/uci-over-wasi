@@ -109,8 +109,9 @@ class Run {
     if (this.code === undefined) this.child.kill("SIGKILL");
   }
 
+  /** everything the run printed: stdout, then stderr, where some engines print their bench summary */
   output(): string {
-    return this.lines.map((l) => l.text).join("\n");
+    return this.lines.map((l) => l.text).join("\n") + "\n" + this.stderr;
   }
 }
 
@@ -284,7 +285,7 @@ const checks: Record<string, () => Promise<string | void>> = {
       const run = new Run(module, ["bench"]);
       if (!open) run.end();
       await run.exit(30 * 60 * 1000);
-      if (!new RegExp(`(^|\\D)${benchNodes}(\\D|$)`).test(run.output())) throw new Error(`no ${benchNodes} in the bench output with stdin ${open ? "open" : "at its end"}: ${run.lines.slice(-2).map((l) => l.text).join(" | ")}`);
+      if (!new RegExp(`(^|\\D)${benchNodes}(\\D|$)`).test(run.output())) throw new Error(`no ${benchNodes} in the bench output with stdin ${open ? "open" : "at its end"}: ${run.output().trim().split("\n").slice(-2).join(" | ")}`);
       run.end();
     }
     return `${benchNodes} nodes with stdin at its end and open`;
