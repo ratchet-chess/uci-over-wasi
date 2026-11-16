@@ -5,12 +5,12 @@
  *   bun tools/wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]
  *   bun tools/wasi-check.ts build/wasi/ratchet.wasm
  *
- * --profile is the module's profile, default polls: a module that reads stdin
- * from inside its search. A deaf module reads nothing during a search, so its
- * checks send no `stop` and no unbounded `go`, which a host keeps from it: they
- * check that a bounded search ends by itself, that lines sent during it are
- * handled after it in order, and that the end of input ends the module after
- * its bestmove.
+ * --profile is the module's profile, default the one it declares (host/wasi
+ * profileOf): polls, a module that reads stdin from inside its search, unless
+ * its custom section says deaf. A deaf module reads nothing during a search.
+ * Its checks: a bounded search ends by itself, lines sent during it are handled
+ * after it in order, the end of input ends the module after its bestmove, and
+ * the host keeps a `stop` and an unbounded `go` from it.
  *
  * --bench runs the module's bench from its command line, once with stdin at
  * its end and once with stdin open, and looks for <nodes> in each output: the
@@ -22,7 +22,9 @@
  * (tools/ws.ts); this script starts it wherever the script runs.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { profileOf } from "../host/wasi/wasi.ts";
 
 const HOST = fileURLToPath(new URL("../host/wasi/main.ts", import.meta.url));
 /** a module's start: a large build compiles for seconds on a cold start */
@@ -127,13 +129,15 @@ const flag = (name: string) => {
   const i = argv.indexOf(name);
   return i < 0 ? undefined : argv.splice(i, 2)[1];
 };
-const profile = flag("--profile") ?? "polls";
-if (profile !== "polls" && profile !== "deaf") throw new Error(`unknown profile ${profile}`);
+const asked = flag("--profile");
+if (asked !== undefined && asked !== "polls" && asked !== "deaf") throw new Error(`unknown profile ${asked}`);
 const benchNodes = flag("--bench");
 const benchArgs = (flag("--bench-args") ?? "bench").split(" ");
 const only = flag("--only");
 const module = argv[0];
 if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]");
+
+const profile = asked ?? profileOf(readFileSync(module));
 
 /** starts the module and takes it through `uci` and `isready` */
 async function start(): Promise<Run> {
@@ -170,7 +174,7 @@ async function bench(): Promise<string> {
 /** a bounded search long enough that the lines after it arrive while it runs, on most engines */
 const DEAF_GO = "go depth 10";
 
-/** the deaf profile's checks: none sends a `stop` or an unbounded `go` */
+/** the deaf profile's checks; the `stop` and unbounded `go` they send are for the host to answer */
 const deafChecks: Record<string, () => Promise<string | void>> = {
   /** a bounded search ends by itself, and the module answers after it */
   async bounded() {
@@ -217,6 +221,31 @@ const deafChecks: Record<string, () => Promise<string | void>> = {
     await run.expect("bestmove", START_MS);
     await quit(run);
     return "exit after quit";
+  },
+
+  /** the host keeps a `stop` from the module, during a search and between searches */
+  async stop() {
+    const run = await start();
+    const from = run.lines.length;
+    run.send("position startpos", DEAF_GO, "stop");
+    await run.expect("bestmove", START_MS);
+    run.send("stop", "isready");
+    await run.expect("readyok", HEAR_MS, from);
+    await quit(run);
+    return "the module answers after two stops";
+  },
+
+  /** the host refuses an unbounded `go` with a null move, and the module goes on */
+  async infinite() {
+    const run = await start();
+    const from = run.lines.length;
+    run.send("position startpos", "go infinite");
+    const i = await run.expect("bestmove", HEAR_MS);
+    if (run.lines[i].text !== "bestmove 0000") throw new Error(`\`go infinite\` was not refused: ${run.lines[i].text}`);
+    run.send("isready");
+    await run.expect("readyok", HEAR_MS, from);
+    await quit(run);
+    return "bestmove 0000, then readyok";
   },
 
   bench,

@@ -15,13 +15,15 @@
  * memory (wasi.ts Ring). A nested worker, made from this same script and named
  * ENGINE_THREAD, runs the build and reads the ring, so a `stop` reaches a running
  * search. Shared memory needs a cross-origin isolated page: COOP same-origin and
- * COEP require-corp, as web/serve.ts sends.
+ * COEP require-corp, as web/serve.ts sends. A build that declares itself deaf
+ * (wasi.ts profileOf) never gets a `stop` or an unbounded `go`: the outer Worker
+ * answers those itself.
  *
  * On a page that is not cross-origin isolated the Worker runs in a degraded mode
  * (degraded, below): no input reaches a running build, so each `go` runs a fresh
  * instance of it.
  */
-import { Ring, Script, runModule, runWasi } from "./wasi.ts";
+import { DEAF_REFUSAL, Ring, Script, profileOf, runModule, runWasi, unheard } from "./wasi.ts";
 
 const ENGINE_THREAD = "uci-over-wasi-engine";
 
@@ -73,7 +75,8 @@ const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
  * because a build may take no other command before it; its answer is dropped.
  *
  * What a page loses: a search hears nothing, so `stop` takes effect when the
- * search ends, and `go infinite` and `go ponder` are refused; the hash table is
+ * search ends, and `go infinite` and `go ponder` are refused (wasi.ts unheard,
+ * as for a deaf build on an isolated page); the hash table is
  * not kept from one `go` to the next; a build's start is paid on every `go`,
  * inside the move's time. The page's hard stop is Worker.terminate().
  */
@@ -101,14 +104,14 @@ async function degraded(): Promise<void> {
     if (words[0] === "isready") scope.postMessage("readyok");
     else if (words[0] === "setoption" || words[0] === "debug") options.push(line);
     else if (words[0] === "position") position = line;
-    // every instance is new, and a search has ended by the time its stop is read
-    else if (words[0] === "ucinewgame" || words[0] === "stop" || words[0] === "ponderhit" || words[0] === "") return;
+    // every instance is new
+    else if (words[0] === "ucinewgame" || words[0] === "") return;
     else if (words[0] === "quit") scope.close();
-    else if (words[0] === "go" && (words.includes("infinite") || words.includes("ponder"))) {
-      // the search could never hear its stop; the null move keeps a page that waits for a bestmove going
-      scope.postMessage(`info string error: ${words.includes("ponder") ? "go ponder" : "go infinite"} needs a cross-origin isolated page`);
-      scope.postMessage("bestmove 0000");
-    } else run(line);
+    else {
+      const answer = unheard(line, "needs a cross-origin isolated page");
+      if (answer === null) run(line);
+      else for (const a of answer) scope.postMessage(a);
+    }
   };
   scope.onmessage = (e: MessageEvent) => {
     if (module) handle(String(e.data));
@@ -129,8 +132,19 @@ if (scope.name === ENGINE_THREAD) {
 } else {
   const ring = new Ring();
   const encoder = new TextEncoder();
-  // lines that come before the build has loaded wait in the ring
-  scope.onmessage = (e: MessageEvent) => ring.push(encoder.encode(String(e.data) + "\n"));
+  /** lines that came before the build had loaded and its profile was known */
+  let early: string[] | undefined = [];
+  let deaf = false;
+  /** a deaf build's unhearable lines are answered here; every other line goes to the ring */
+  const pass = (line: string) => {
+    const answer = deaf ? unheard(line, DEAF_REFUSAL) : null;
+    if (answer === null) ring.push(encoder.encode(line + "\n"));
+    else for (const a of answer) scope.postMessage(a);
+  };
+  scope.onmessage = (e: MessageEvent) => {
+    if (early) early.push(String(e.data));
+    else pass(String(e.data));
+  };
   const engine = new Worker(script, { name: ENGINE_THREAD });
   engine.onmessage = (e: MessageEvent<string | { exit: number }>) => {
     if (typeof e.data === "string") scope.postMessage(e.data);
@@ -142,6 +156,9 @@ if (scope.name === ENGINE_THREAD) {
   // a classic worker script has no top-level await
   void (async () => {
     const wasm = await (await fetch(build)).arrayBuffer();
+    deaf = profileOf(new Uint8Array(wasm)) === "deaf";
     engine.postMessage({ wasm, ring: ring.buffer, args: [buildName] }, [wasm]);
+    for (const line of early!) pass(line);
+    early = undefined;
   })();
 }

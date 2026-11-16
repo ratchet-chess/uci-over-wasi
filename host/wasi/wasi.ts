@@ -11,8 +11,69 @@
  * gets a fixed answer (floorStubs), and a module that needs more than those
  * answers does not run here.
  *
+ * A module that reads nothing during a search says so in a custom section
+ * (profileOf). Its host answers in its place the lines such a search could not
+ * act on (unheard), and passes on the rest.
+ *
  * The layouts are WASI preview 1's (WebAssembly/WASI, legacy/preview1/docs.md).
  */
+
+/** how a module takes input during a search: it polls stdin, or it is deaf until the search ends */
+export type Profile = "polls" | "deaf";
+
+/** the custom section a module declares itself in, as lines of key=value */
+const SECTION = "uci_over_wasi";
+
+/**
+ * A module's profile, read from its bytes: `profile=deaf` in its `uci_over_wasi`
+ * custom section, or polls when it has no such section. A build writes the
+ * section with `llvm-objcopy --add-section=uci_over_wasi=<file>`, or from its
+ * source.
+ */
+export function profileOf(wasm: Uint8Array): Profile {
+  /** an unsigned LEB128 at `at`: its value and the offset after it */
+  const leb = (at: number): [number, number] => {
+    let value = 0;
+    for (let shift = 0; ; shift += 7) {
+      const b = wasm[at++];
+      value += (b & 0x7f) * 2 ** shift;
+      if (b < 0x80) return [value, at];
+    }
+  };
+  // a module is an 8-byte header, then sections: an id byte, a size, the content; a custom section (id 0) opens with its name
+  for (let at = 8; at < wasm.length; ) {
+    const id = wasm[at];
+    const [size, body] = leb(at + 1);
+    if (id === 0) {
+      const [nameLen, name] = leb(body);
+      const text = new TextDecoder();
+      if (text.decode(wasm.subarray(name, name + nameLen)) === SECTION && /^profile=deaf\s*$/m.test(text.decode(wasm.subarray(name + nameLen, body + size)))) return "deaf";
+    }
+    at = body + size;
+  }
+  return "polls";
+}
+
+/**
+ * What a host does with one line of input for a search that hears nothing: a
+ * deaf module's, or any module's on a page without shared memory. null: pass
+ * the line on. Otherwise the host's own answer, which may be no lines at all.
+ * A `stop` or `ponderhit` is dropped, since the search has ended by the time it
+ * could be read. An unbounded `go` is refused, since nothing could end it; the
+ * null move keeps a GUI that waits for a bestmove going. `why` ends the refusal's
+ * sentence.
+ */
+export function unheard(line: string, why: string): string[] | null {
+  const words = line.trim().split(/\s+/);
+  if (words[0] === "stop" || words[0] === "ponderhit") return [];
+  if (words[0] === "go" && (words.includes("infinite") || words.includes("ponder"))) {
+    return [`info string error: ${words.includes("ponder") ? "go ponder" : "go infinite"} ${why}`, "bestmove 0000"];
+  }
+  return null;
+}
+
+/** why a deaf module's host refuses an unbounded go */
+export const DEAF_REFUSAL = "needs an engine that reads its input during a search";
 
 /** the ring's header, in Int32 slots: bytes written so far, bytes read so far, and 1 once input has ended */
 const WRITTEN = 0;
@@ -285,6 +346,8 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
       return ESUCCESS;
     },
     environ_get: () => ESUCCESS,
+    // one thread: a yield has nothing to yield to, and Go's runtime throws on a failed one
+    sched_yield: () => ESUCCESS,
     random_get(buf: number, len: number): number {
       mem();
       for (let i = 0; i < len; i++) {

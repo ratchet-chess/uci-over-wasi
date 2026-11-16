@@ -1,7 +1,8 @@
 /**
  * Runs a WASI build as a UCI engine under Bun or Node: stdin feeds the engine's
  * input ring, and the engine runs on its own thread (thread.ts), so a `stop`
- * reaches a running search.
+ * reaches a running search. A build that declares itself deaf (wasi.ts profileOf)
+ * never gets a `stop` or an unbounded `go`.
  *
  *   bun host/wasi/main.ts <build.wasm> [args...]   (or node)
  *   bun host/wasi/main.ts build/wasi/ratchet.wasm bench
@@ -11,7 +12,7 @@
  */
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
-import { Ring } from "./wasi.ts";
+import { DEAF_REFUSAL, Ring, profileOf, unheard } from "./wasi.ts";
 
 /**
  * Runs the WASI build `wasm` with the command line `args`, its name first, and ends the process with its exit
@@ -25,8 +26,29 @@ export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new UR
     process.stderr.write(`engine error: ${e.stack ?? e}\n`);
     process.exit(1);
   });
-  process.stdin.on("data", (chunk: Buffer) => ring.push(chunk));
-  process.stdin.on("end", () => ring.close());
+  if (profileOf(wasm) === "polls") {
+    process.stdin.on("data", (chunk: Buffer) => ring.push(chunk));
+    process.stdin.on("end", () => ring.close());
+    return;
+  }
+  // a deaf module: the lines its search could not act on are answered here, line by line
+  let partial = "";
+  const pass = (line: string) => {
+    const answer = unheard(line, DEAF_REFUSAL);
+    if (answer === null) ring.push(Buffer.from(line + "\n"));
+    else for (const a of answer) process.stdout.write(a + "\n");
+  };
+  process.stdin.on("data", (chunk: Buffer) => {
+    partial += chunk.toString();
+    for (let nl = partial.indexOf("\n"); nl >= 0; nl = partial.indexOf("\n")) {
+      pass(partial.slice(0, nl));
+      partial = partial.slice(nl + 1);
+    }
+  });
+  process.stdin.on("end", () => {
+    if (partial !== "") pass(partial);
+    ring.close();
+  });
 }
 
 if (import.meta.main) {
