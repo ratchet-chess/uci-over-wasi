@@ -271,19 +271,26 @@ const pollsChecks: Record<string, () => Promise<string | void>> = {
     return `queued position applied, reply ${move}`;
   },
 
-  /** at the end of input a bounded search finishes, prints its bestmove, and the module exits */
+  /**
+   * At the end of input a bounded search finishes, prints its bestmove, and the
+   * module exits. The same lines go to a module whose stdin stays open, and the
+   * search that sees the end of input must take about as long: how much of a
+   * movetime an engine uses is its own.
+   */
   async "eof-bounded"() {
+    const lines = ["uci", "position startpos", "go movetime 1500"];
+    const open = new Run(module);
+    let at = open.send(...lines);
+    const openMs = open.lines[await open.expect("bestmove", START_MS)].at - at;
+    await quit(open);
     const run = new Run(module);
-    run.send("uci", "position startpos", "go movetime 1500");
-    const at = performance.now();
+    at = run.send(...lines);
     run.end();
-    const i = await run.expect("bestmove", START_MS);
+    const ms = run.lines[await run.expect("bestmove", START_MS)].at - at;
     const code = await run.exit(HEAR_MS);
-    const ms = Math.round(run.lines[i].at - at);
-    // a start-up that eats the whole wait would hide a cut search, so a short one is a failure only when clearly short
-    if (ms < 700) throw new Error(`the search ended ${ms} ms in, cut short by the end of input`);
+    if (ms < 0.7 * openMs) throw new Error(`the search ended ${Math.round(ms)} ms in, against ${Math.round(openMs)} ms with stdin open: cut short by the end of input`);
     if (code !== 0) throw new Error(`exit code ${code}`);
-    return `bestmove after ${ms} ms of a 1500 ms search, then exit 0`;
+    return `bestmove after ${Math.round(ms)} ms, against ${Math.round(openMs)} ms with stdin open, then exit 0`;
   },
 
   /** at the end of input an unbounded search ends as on `stop`, and the module exits */
