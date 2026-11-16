@@ -1,10 +1,16 @@
 /**
  * Checks a WASI build against UCI over WASI's rules for input during a search,
- * under host/wasi and the runtime that runs this script. It covers the polls
- * profile: a module that reads stdin from inside its search.
+ * under host/wasi and the runtime that runs this script.
  *
- *   bun tools/wasi-check.ts <build.wasm> [--bench <nodes>] [--bench-args <args>] [--only <check>]
+ *   bun tools/wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]
  *   bun tools/wasi-check.ts build/wasi/ratchet.wasm
+ *
+ * --profile is the module's profile, default polls: a module that reads stdin
+ * from inside its search. A deaf module reads nothing during a search, so its
+ * checks send no `stop` and no unbounded `go`, which a host keeps from it: they
+ * check that a bounded search ends by itself, that lines sent during it are
+ * handled after it in order, and that the end of input ends the module after
+ * its bestmove.
  *
  * --bench runs the module's bench from its command line, once with stdin at
  * its end and once with stdin open, and looks for <nodes> in each output: the
@@ -121,11 +127,13 @@ const flag = (name: string) => {
   const i = argv.indexOf(name);
   return i < 0 ? undefined : argv.splice(i, 2)[1];
 };
+const profile = flag("--profile") ?? "polls";
+if (profile !== "polls" && profile !== "deaf") throw new Error(`unknown profile ${profile}`);
 const benchNodes = flag("--bench");
 const benchArgs = (flag("--bench-args") ?? "bench").split(" ");
 const only = flag("--only");
 const module = argv[0];
-if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--bench <nodes>] [--bench-args <args>] [--only <check>]");
+if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]");
 
 /** starts the module and takes it through `uci` and `isready` */
 async function start(): Promise<Run> {
@@ -146,7 +154,75 @@ async function quit(run: Run): Promise<void> {
 /** a position with one legal move, a mate: an unbounded search of it ends by itself and must then wait for `stop` */
 const MATE_IN_ONE = "position fen k7/8/1K6/8/8/8/8/7R w - - 0 1";
 
-const checks: Record<string, () => Promise<string | void>> = {
+/** a bench from the command line reaches its node count whether stdin has ended or not */
+async function bench(): Promise<string> {
+  if (!benchNodes) return "skipped: no --bench";
+  for (const open of [false, true]) {
+    const run = new Run(module, benchArgs);
+    if (!open) run.end();
+    await run.exit(30 * 60 * 1000);
+    if (!new RegExp(`(^|\\D)${benchNodes}(\\D|$)`).test(run.output())) throw new Error(`no ${benchNodes} in the bench output with stdin ${open ? "open" : "at its end"}: ${run.output().trim().split("\n").slice(-2).join(" | ")}`);
+    run.end();
+  }
+  return `${benchNodes} nodes with stdin at its end and open`;
+}
+
+/** a bounded search long enough that the lines after it arrive while it runs, on most engines */
+const DEAF_GO = "go depth 10";
+
+/** the deaf profile's checks: none sends a `stop` or an unbounded `go` */
+const deafChecks: Record<string, () => Promise<string | void>> = {
+  /** a bounded search ends by itself, and the module answers after it */
+  async bounded() {
+    const run = await start();
+    const from = run.lines.length;
+    const at = run.send("position startpos", DEAF_GO);
+    const i = await run.expect("bestmove", START_MS);
+    run.send("isready");
+    await run.expect("readyok", HEAR_MS, from);
+    await quit(run);
+    return `bestmove after ${Math.round(run.lines[i].at - at)} ms`;
+  },
+
+  /** lines sent during a search are handled after it, in order, and none is lost */
+  async order() {
+    const run = await start();
+    const from = run.lines.length;
+    run.send("position startpos", DEAF_GO, "position startpos moves e2e4", "isready", "go depth 1");
+    const best = await run.expect("bestmove", START_MS);
+    const ready = await run.expect("readyok", HEAR_MS, from);
+    if (ready < best) throw new Error("readyok came before the bestmove of the search sent ahead of it");
+    const next = await run.expect("bestmove", HEAR_MS, best + 1);
+    const move = run.lines[next].text.split(" ")[1];
+    await quit(run);
+    if (!/^[a-h][78]/.test(move)) throw new Error(`the queued \`position\` was lost: after 1. e4 the module played ${move}`);
+    return `bestmove, readyok, then the queued position's reply ${move}`;
+  },
+
+  /** at the end of input the search finishes, prints its bestmove, and the module exits */
+  async eof() {
+    const run = new Run(module);
+    run.send("uci", "position startpos", DEAF_GO);
+    run.end();
+    await run.expect("bestmove", START_MS);
+    const code = await run.exit(HEAR_MS);
+    if (code !== 0) throw new Error(`exit code ${code}`);
+    return "bestmove, then exit 0";
+  },
+
+  /** `quit` between searches ends the module */
+  async quit() {
+    const run = await start();
+    run.send("position startpos", "go depth 4");
+    await run.expect("bestmove", START_MS);
+    await quit(run);
+    return "exit after quit";
+  },
+
+  bench,
+};
+
+const pollsChecks: Record<string, () => Promise<string | void>> = {
   /** `stop` ends an unbounded search */
   async stop() {
     const run = await start();
@@ -280,22 +356,11 @@ const checks: Record<string, () => Promise<string | void>> = {
     return `bestmove ${Math.round(run.lines[i].at - at)} ms after ponderhit; stop ends a ponder search`;
   },
 
-  /** a bench from the command line reaches its node count whether stdin has ended or not */
-  async bench() {
-    if (!benchNodes) return "skipped: no --bench";
-    for (const open of [false, true]) {
-      const run = new Run(module, benchArgs);
-      if (!open) run.end();
-      await run.exit(30 * 60 * 1000);
-      if (!new RegExp(`(^|\\D)${benchNodes}(\\D|$)`).test(run.output())) throw new Error(`no ${benchNodes} in the bench output with stdin ${open ? "open" : "at its end"}: ${run.output().trim().split("\n").slice(-2).join(" | ")}`);
-      run.end();
-    }
-    return `${benchNodes} nodes with stdin at its end and open`;
-  },
+  bench,
 };
 
 let failed = 0;
-for (const [name, check] of Object.entries(checks)) {
+for (const [name, check] of Object.entries(profile === "deaf" ? deafChecks : pollsChecks)) {
   if (only && only !== name) continue;
   try {
     console.log(`pass  ${name}: ${(await check()) ?? ""}`);
