@@ -40,7 +40,8 @@ enum {
 /*
  * The next line of input, without its line end: a line queued during a search
  * first, else it waits for one. NULL at the end of input. The text is the
- * helper's, and the next call to the helper overwrites it.
+ * helper's and stays as it is until the next uci_getline, so the UCI loop may
+ * read it after a search that polled.
  */
 const char *uci_getline(void);
 

@@ -19,7 +19,8 @@ typedef struct {
 
 static Bytes raw;   /* stdin's bytes not yet split into lines */
 static Bytes queue; /* whole lines, each ended by '\n', that wait for uci_getline */
-static Bytes line;  /* the line uci_getline last returned */
+static Bytes given; /* the line uci_getline last returned */
+static Bytes seen;  /* the line a poll is looking at */
 static int at_end;  /* stdin has ended */
 
 static void fail(const char *why)
@@ -76,16 +77,16 @@ static void fill(void)
 }
 
 /* moves the first line of `from` into `line`, without its line end; returns whether one was there */
-static int take_line(Bytes *from)
+static int take_line(Bytes *from, Bytes *line)
 {
     char *nl = memchr(from->at, '\n', from->len);
     if (!nl) return 0;
     size_t n = (size_t)(nl - from->at);
-    line.len = 0;
-    append(&line, from->at, n + 1);
-    while (n > 0 && line.at[n - 1] == '\r') n--;
-    line.at[n] = '\0';
-    line.len = n;
+    line->len = 0;
+    append(line, from->at, n + 1);
+    while (n > 0 && line->at[n - 1] == '\r') n--;
+    line->at[n] = '\0';
+    line->len = n;
     n = (size_t)(nl - from->at) + 1;
     memmove(from->at, from->at + n, from->len - n);
     from->len -= n;
@@ -98,10 +99,10 @@ static void end_last_line(void)
     if (at_end && raw.len > 0 && raw.at[raw.len - 1] != '\n') append(&raw, "\n", 1);
 }
 
-/* whether the line's first word is `word` */
+/* whether the first word of the line a poll is looking at is `word` */
 static int is_command(const char *word)
 {
-    const char *p = line.at;
+    const char *p = seen.at;
     size_t n = strlen(word);
     while (*p == ' ' || *p == '\t') p++;
     return strncmp(p, word, n) == 0 && (p[n] == '\0' || p[n] == ' ' || p[n] == '\t');
@@ -110,7 +111,7 @@ static int is_command(const char *word)
 const char *uci_getline(void)
 {
     for (;;) {
-        if (take_line(&queue) || take_line(&raw)) return line.at;
+        if (take_line(&queue, &given) || take_line(&raw, &given)) return given.at;
         if (at_end) return NULL;
         fill();
         end_last_line();
@@ -121,7 +122,7 @@ const char *uci_getline(void)
 static int handle_lines(int unbounded)
 {
     int heard = 0;
-    while (take_line(&raw)) {
+    while (take_line(&raw, &seen)) {
         if (is_command("isready") && queue.len == 0) {
             fputs("readyok\n", stdout);
             fflush(stdout);
@@ -131,7 +132,7 @@ static int handle_lines(int unbounded)
             heard |= UCI_PONDERHIT;
         } else {
             if (is_command("quit")) heard |= UCI_STOP | UCI_QUIT;
-            append(&queue, line.at, line.len);
+            append(&queue, seen.at, seen.len);
             append(&queue, "\n", 1);
         }
     }
