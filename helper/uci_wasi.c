@@ -1,7 +1,8 @@
 /*
  * UCI over WASI: the poll helper for a C or C++ engine. uci_wasi.h has its use.
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 the Ratchet contributors. The license's text is in uci_wasi.h.
  */
 #include "uci_wasi.h"
 
