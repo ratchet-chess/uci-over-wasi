@@ -35,10 +35,14 @@ const scope = globalThis as unknown as {
   close(): void;
 };
 
-/** a build's fd_write: posts each whole line of its stdout as one message, and sends its stderr to the console */
-function lineWriter(): (fd: number, bytes: Uint8Array) => void {
+/**
+ * A build's fd_write: posts each whole line of its stdout as one message, and sends its stderr to the console.
+ * With `afterUciok`, it drops the lines up to the first `uciok`: the answer to a replayed `uci`.
+ */
+function lineWriter(afterUciok = false): (fd: number, bytes: Uint8Array) => void {
   const decoder = new TextDecoder();
   let partial = "";
+  let dropping = afterUciok;
   return (fd, bytes) => {
     const text = decoder.decode(bytes, { stream: true });
     if (fd === 2) {
@@ -47,8 +51,10 @@ function lineWriter(): (fd: number, bytes: Uint8Array) => void {
     }
     partial += text;
     for (let nl = partial.indexOf("\n"); nl >= 0; nl = partial.indexOf("\n")) {
-      scope.postMessage(partial.slice(0, nl));
+      const line = partial.slice(0, nl);
       partial = partial.slice(nl + 1);
+      if (!dropping) scope.postMessage(line);
+      else if (line.trim() === "uciok") dropping = false;
     }
   };
 }
@@ -62,8 +68,9 @@ const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
  * cannot wait for the page's next line there, so the build cannot stay loaded
  * between commands. This Worker keeps the session instead: it stores the
  * `setoption` and `position` lines, and runs a fresh instance for each `go`, fed
- * the stored lines, the `go`, then the end of input, at which a build finishes
- * its search, prints its bestmove and exits.
+ * `uci`, the stored lines, the `go`, then the end of input, at which a build
+ * finishes its search, prints its bestmove and exits. The replayed `uci` is there
+ * because a build may take no other command before it; its answer is dropped.
  *
  * What a page loses: a search hears nothing, so `stop` takes effect when the
  * search ends, and `go infinite` and `go ponder` are refused; the hash table is
@@ -79,11 +86,12 @@ async function degraded(): Promise<void> {
   /** lines that came before the build had compiled */
   const early: string[] = [];
 
-  /** one fresh instance, given the session's lines and then `line` */
+  /** one fresh instance, given `uci`, the session's lines and then `line` */
   const run = (line: string) => {
-    const input = [...options, position, line].filter((l) => l !== "").join("\n") + "\n";
+    const first = line.trim() === "uci";
+    const input = [...(first ? [] : ["uci", ...options, position]), line].filter((l) => l !== "").join("\n") + "\n";
     try {
-      runModule(module!, new Script(encoder.encode(input)), [buildName], lineWriter());
+      runModule(module!, new Script(encoder.encode(input)), [buildName], lineWriter(!first));
     } catch (e) {
       scope.postMessage(`info string error: ${e}`);
     }
