@@ -170,7 +170,16 @@ async function degraded(): Promise<void> {
     else early.push(String(e.data));
   };
   scope.postMessage("info string the page is not cross-origin isolated (COOP same-origin, COEP require-corp) and this browser has no JavaScript Promise Integration: stop is heard when a search ends, and the hash table is not kept between searches");
-  module = await WebAssembly.compileStreaming(fetch(build)).catch(async () => WebAssembly.compile(await (await fetch(build)).arrayBuffer()));
+  try {
+    const wasm = await (await fetch(build)).arrayBuffer();
+    // every build is run as a deaf one here, but a profile this host does not know is still not run
+    profileOf(new Uint8Array(wasm));
+    module = await WebAssembly.compile(wasm);
+  } catch (e) {
+    scope.postMessage(`info string error: ${e}`);
+    scope.close();
+    return;
+  }
   for (const line of early.splice(0)) handle(line);
 }
 
@@ -195,8 +204,14 @@ if (scope.name === ENGINE_THREAD) {
   };
   // a classic worker script has no top-level await
   void (async () => {
-    const wasm = await (await fetch(build)).arrayBuffer();
-    loaded(wasm);
-    engine.postMessage({ wasm, ring: ring.buffer, args: [buildName] }, [wasm]);
+    try {
+      const wasm = await (await fetch(build)).arrayBuffer();
+      loaded(wasm);
+      engine.postMessage({ wasm, ring: ring.buffer, args: [buildName] }, [wasm]);
+    } catch (e) {
+      scope.postMessage(`info string error: ${e}`);
+      engine.terminate();
+      scope.close();
+    }
   })();
 }

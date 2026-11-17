@@ -35,8 +35,11 @@ export type Profile = "polls" | "deaf";
 const SECTION = "uci_over_wasi";
 
 /**
- * A module's profile, read from its bytes: `profile=deaf` in its `uci_over_wasi`
- * custom section, or polls when it has no such section. A build writes the
+ * A module's profile, read from its bytes: the `profile` line of its
+ * `uci_over_wasi` custom section, which holds lines of key=value, or polls when
+ * it has no such section or line. A key this host does not know is ignored. A
+ * profile it does not know throws: the host could not tell what input the
+ * module's search takes, so it does not run the module. A build writes the
  * section with `llvm-objcopy --add-section=uci_over_wasi=<file>`, or from its
  * source.
  */
@@ -50,6 +53,7 @@ export function profileOf(wasm: Uint8Array): Profile {
       if (b < 0x80) return [value, at];
     }
   };
+  let profile: Profile = "polls";
   // a module is an 8-byte header, then sections: an id byte, a size, the content; a custom section (id 0) opens with its name
   for (let at = 8; at < wasm.length; ) {
     const id = wasm[at];
@@ -57,11 +61,19 @@ export function profileOf(wasm: Uint8Array): Profile {
     if (id === 0) {
       const [nameLen, name] = leb(body);
       const text = new TextDecoder();
-      if (text.decode(wasm.subarray(name, name + nameLen)) === SECTION && /^profile=deaf\s*$/m.test(text.decode(wasm.subarray(name + nameLen, body + size)))) return "deaf";
+      if (text.decode(wasm.subarray(name, name + nameLen)) === SECTION) {
+        for (const line of text.decode(wasm.subarray(name + nameLen, body + size)).split("\n")) {
+          const eq = line.indexOf("=");
+          if (eq < 0 || line.slice(0, eq).trim() !== "profile") continue;
+          const value = line.slice(eq + 1).trim();
+          if (value !== "polls" && value !== "deaf") throw new Error(`the module declares profile=${value}; this host knows polls and deaf`);
+          profile = value;
+        }
+      }
     }
     at = body + size;
   }
-  return "polls";
+  return profile;
 }
 
 /** the words of a `go` that end its search without a `stop`; `perft` is no search, and ends by itself */

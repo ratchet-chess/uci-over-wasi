@@ -12,13 +12,21 @@
  */
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
-import { DEAF_REFUSAL, Ring, profileOf, unheard } from "./wasi.ts";
+import { DEAF_REFUSAL, Ring, profileOf, unheard, type Profile } from "./wasi.ts";
 
 /**
  * Runs the WASI build `wasm` with the command line `args`, its name first, and ends the process with its exit
  * code. `thread` is thread.ts's location: a Bun executable embeds it at its own path inside the executable.
  */
 export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new URL("./thread.ts", import.meta.url)): void {
+  let profile: Profile;
+  try {
+    profile = profileOf(wasm);
+  } catch (e) {
+    // a profile this host does not know: the module is not run
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(1);
+  }
   const ring = new Ring();
   const worker = new Worker(thread, { workerData: { wasm, ring: ring.buffer, args } });
   worker.on("message", (code: number) => process.exit(code));
@@ -26,7 +34,7 @@ export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new UR
     process.stderr.write(`engine error: ${e.stack ?? e}\n`);
     process.exit(1);
   });
-  if (profileOf(wasm) === "polls") {
+  if (profile === "polls") {
     process.stdin.on("data", (chunk: Buffer) => ring.push(chunk));
     process.stdin.on("end", () => ring.close());
     return;
