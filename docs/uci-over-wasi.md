@@ -71,7 +71,10 @@ A C library, a Rust standard library or a Go runtime imports more of preview 1 t
 each other import a fixed answer (§ The fixed answers). A module that needs more than those answers does not
 meet this document. In practice:
 
-- **No file system.** A net or a book is compiled into the module, or it is off. Tablebases are off.
+- **No file system.** A module opens no file.
+  - **A net** is compiled into the module.
+  - **The openings are the GUI's.** The GUI chooses a book and sends positions, so an engine's own book is off.
+  - **Tablebases are the GUI's too,** to adjudicate a game. An engine's own probing of tablebases is off.
 - **No environment.** There are no environment variables.
 - **Repeatable random bytes.** `random_get` fills from a fixed seed, so two runs of a module are the same run.
 
