@@ -36,8 +36,11 @@ engines and other hosts may adopt it.
 - It imports only from `wasi_snapshot_preview1`.
 - It has one thread. It uses no thread proposal, and it starts no thread.
 - It is a 32-bit module, so it addresses at most 4 GiB.
-- It may use WebAssembly features beyond the first version, such as fixed-width SIMD and exception handling.
-  A host runs the module only where the runtime has those features.
+- It may use fixed-width SIMD, with its 128-bit vectors. Every host has it (§ Running a module).
+- It uses no relaxed SIMD. A relaxed operation can give different results on different CPUs, so two runs of
+  a module would not be the same run.
+- It may use another WebAssembly feature beyond the first version, such as exception handling. A host runs
+  the module only where the runtime has that feature.
 
 The host calls `_start` once. The module's whole session runs inside that call.
 
@@ -161,6 +164,7 @@ the source. A deaf module needs the section: its host must keep `stop` and an un
 
 ### Running a module
 
+- The host's runtime has fixed-width SIMD.
 - The host refuses a module that imports from anywhere but `wasi_snapshot_preview1`.
 - It reads the module's profile (§ Reading the profile) before it runs the module.
 - It calls `_start` once, with the command line the GUI gave.
@@ -337,5 +341,6 @@ No check exists yet for a host. A second host is checked by running modules that
 ### What has not been run
 
 - **WebKit.** No module and no Worker has run in a WebKit browser.
+- **SIMD in a native executable.** No module with SIMD has been built through wasm2c.
 - **A host other than Ratchet's.** The fixed answers were chosen from what C, C++, Rust, Go and
   AssemblyScript modules call. Another language's runtime may call more.

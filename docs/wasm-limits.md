@@ -27,8 +27,10 @@ flowchart LR
 
 - **The module names WebAssembly features, not CPU features.** A runtime that lacks one of them refuses the
   whole module.
-- **So a feature level is a separate file.** A host that offers two levels checks the runtime first, with
-  `WebAssembly.validate`. `FEATURES` in `web/bench.ts` has such checks.
+- **Every host has fixed-width SIMD** (`docs/uci-over-wasi.md` § Form). So a module with SIMD needs no
+  second file without it.
+- **Any other feature level is a separate file.** A host that offers two levels checks the runtime first,
+  with `WebAssembly.validate`. `FEATURES` in `web/bench.ts` has such checks.
 - **The runtime chooses the CPU's instructions when it compiles the module.** One file serves x86 and ARM, so
   no module is built per processor.
 - **A native executable fixes its CPU level when it is compiled.** `NATIVE` in `tools/package.ts` lists
@@ -45,14 +47,14 @@ flowchart LR
 | BMI2 PEXT and PDEP | nothing | Sliding attacks use magic multiplication (`core/magics.ts`). |
 | prefetch | nothing | A search cannot prefetch a hash table entry. |
 | large pages, NUMA | nothing | A module has one linear memory. |
-| SSE2 to SSE4.1, NEON | fixed-width SIMD: 128-bit vectors, a feature beyond the first version | One vector path serves x86 and ARM. |
+| SSE2 to SSE4.1, NEON | fixed-width SIMD: 128-bit vectors, which every host has | One vector path serves x86 and ARM. |
 | AVX2, AVX-512 | no wider vector | A 256-bit loop runs as two 128-bit steps. |
-| AVX-512 VNNI | relaxed SIMD, a further feature, has dot products | See the note below. |
+| AVX-512 VNNI | nothing: relaxed SIMD has dot products, and a module uses none | See the note below. |
 | threads | the threads feature, with shared memory | A module has one thread (`docs/uci-over-wasi.md` § Form). |
 
-**Relaxed SIMD can differ by CPU.** For some inputs, a relaxed operation gives a result that the runtime
-chooses. A module that uses one can then search different nodes on different CPUs. Ratchet's builds use none:
-`tools/build.sh` passes no `--enable`, so its modules have no SIMD.
+**A module uses no relaxed SIMD** (`docs/uci-over-wasi.md` § Form). For some inputs, a relaxed operation
+gives a result that the runtime chooses. A module that used one could then search different nodes on
+different CPUs.
 
 ## Limits that no edit removes
 
@@ -84,17 +86,12 @@ Each row is an edit to a port. An engine written for the target starts in the ri
 | no input read during a search | Declare the deaf profile. The code stays as it is. | `helper/README.md` § A deaf engine |
 | other thread starts, such as a threaded hash clear | Remove each one, or make it inline. | `helper/README.md` § Porting a thread engine |
 | a net read from a file | Compile the net into the module. | `docs/uci-over-wasi.md` § What a module may rely on |
-| a net compiled in through incbin | Use C23 `#embed`, because incbin's assembler block has no WebAssembly form. | |
-| a net on SSE or AVX2 intrinsics only | Write a 128-bit path. Until then, the net runs on its scalar path. | |
+| a net compiled in through incbin | Use C23 `#embed`, because incbin's assembler block has no WebAssembly form. | `helper/README.md` § Building |
+| a net on SSE or AVX2 intrinsics only | Write a 128-bit path. Until then, the net runs on its scalar path. | `helper/README.md` § Building |
 | `setjmp` and `longjmp`, or C++ exceptions | Build with the flags for WebAssembly exception handling. The module then needs that feature. | `helper/README.md` § Building |
 | a `Hash` maximum above what a module can allocate | Cap the option. | `docs/uci-over-wasi.md` § UCI options |
 | a deep search on the native stack | Set the module's stack size at the link. | `helper/README.md` § Building |
-| code that assumes a 64-bit pointer or `size_t` | Give each such value its 64-bit type by name. | |
-
-Two forms need no edit:
-
-- **Rust's `include_bytes!`** compiles a file into the module as written.
-- **Portable vector source,** such as Rust's `std::simd`, compiles to 128-bit steps as written.
+| code that assumes a 64-bit pointer or `size_t` | Give each such value its 64-bit type by name. | `helper/README.md` § Building |
 
 ## What the limits mean for each engine
 

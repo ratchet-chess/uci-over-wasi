@@ -48,7 +48,7 @@ return before it. Each file's header has the rules in full.
 
 | language | build | notes |
 |---|---|---|
-| C, C++ | wasi-sdk's clang with `--target=wasm32-wasip1`; link the helper's object | Link with `-Wl,--wrap=pthread_create`. Set the stack with `-Wl,-z,stack-size=<bytes>`. |
+| C, C++ | wasi-sdk's clang with `--target=wasm32-wasip1`; link the helper's object | Link with `-Wl,--wrap=pthread_create`. Set the stack with `-Wl,-z,stack-size=<bytes>`. `-msimd128` turns on SIMD. |
 | Rust | `cargo build --release --target wasm32-wasip1`; copy `uci_wasi.rs` into the crate as a module | Set the stack with `-Clink-arg=-zstack-size=<bytes>`. `-Ctarget-feature=+simd128` turns on SIMD. |
 | Go | `GOOS=wasip1 GOARCH=wasm go build`; copy `uci_wasi.go` into the tree as a package | Nothing traps a `go` statement the port missed; such a goroutine never runs. |
 
@@ -62,6 +62,13 @@ return before it. Each file's header has the rules in full.
 - **C++ exceptions.** Build with `-fno-exceptions` where the engine throws nothing.
 - **Memory never shrinks.** Free the old hash table before allocating its replacement. In Go, also
   run the collector first.
+- **A net compiled in through incbin.** incbin's assembler block has no WebAssembly form. Use C23 `#embed`
+  in its place, and name the net's folder with `--embed-dir`. Rust's `include_bytes!` needs no change.
+- **A net on x86 intrinsics.** wasi-sdk refuses `immintrin.h`, so the engine builds on its scalar path.
+  For a faster net, write a path on `wasm_simd128.h`. Portable vector source, such as Rust's `std::simd`,
+  compiles to 128-bit steps as written. A module uses no relaxed SIMD.
+- **Sizes have 32 bits.** `size_t`, `long` and Rust's `usize` are 32-bit types in a module. Where a value
+  needs 64 bits, name a 64-bit type. A table that is compiled in with 64-bit entries is one such place.
 
 ## A deaf engine
 
