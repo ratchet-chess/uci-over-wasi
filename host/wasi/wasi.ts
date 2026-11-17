@@ -64,8 +64,8 @@ export function profileOf(wasm: Uint8Array): Profile {
   return "polls";
 }
 
-/** the words of a `go` that end its search without a `stop` */
-const BOUNDS = ["wtime", "btime", "movetime", "depth", "nodes", "mate"];
+/** the words of a `go` that end its search without a `stop`; `perft` is no search, and ends by itself */
+const BOUNDS = ["wtime", "btime", "movetime", "depth", "nodes", "mate", "perft"];
 
 /**
  * Whether a `go` line is unbounded: nothing in it ends the search. It has
