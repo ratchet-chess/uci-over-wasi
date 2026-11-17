@@ -54,20 +54,34 @@ export function profileOf(wasm: Uint8Array): Profile {
   return "polls";
 }
 
+/** the words of a `go` that end its search without a `stop` */
+const BOUNDS = ["wtime", "btime", "movetime", "depth", "nodes", "mate"];
+
+/**
+ * Whether a `go` line is unbounded: nothing in it ends the search. It has
+ * `infinite` or `ponder`, or it has none of the words that bound a search.
+ * Either side's clock counts as a bound, so a host need not know the side to
+ * move.
+ */
+export function unbounded(words: string[]): boolean {
+  return words.includes("infinite") || words.includes("ponder") || !BOUNDS.some((b) => words.includes(b));
+}
+
 /**
  * What a host does with one line of input for a search that hears nothing: a
- * deaf module's, or any module's on a page without shared memory. null: pass
- * the line on. Otherwise the host's own answer, which may be no lines at all.
- * A `stop` or `ponderhit` is dropped, since the search has ended by the time it
- * could be read. An unbounded `go` is refused, since nothing could end it; the
- * null move keeps a GUI that waits for a bestmove going. `why` ends the refusal's
- * sentence.
+ * deaf module's, or any module's where the host cannot deliver input to a
+ * running search. null: pass the line on. Otherwise the host's own answer, which
+ * may be no lines at all. A `stop` or `ponderhit` is dropped, since the search
+ * has ended by the time it could be read. An unbounded `go` is refused, since
+ * nothing could end it; the null move keeps a GUI that waits for a bestmove
+ * going. `why` ends the refusal's sentence.
  */
 export function unheard(line: string, why: string): string[] | null {
   const words = line.trim().split(/\s+/);
   if (words[0] === "stop" || words[0] === "ponderhit") return [];
-  if (words[0] === "go" && (words.includes("infinite") || words.includes("ponder"))) {
-    return [`info string error: ${words.includes("ponder") ? "go ponder" : "go infinite"} ${why}`, "bestmove 0000"];
+  if (words[0] === "go" && unbounded(words)) {
+    const what = words.includes("ponder") ? "go ponder" : words.includes("infinite") ? "go infinite" : "a go with no limit";
+    return [`info string error: ${what} ${why}`, "bestmove 0000"];
   }
   return null;
 }

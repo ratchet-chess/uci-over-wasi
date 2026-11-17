@@ -239,13 +239,18 @@ const deafChecks: Record<string, () => Promise<string | void>> = {
   async infinite() {
     const run = await start();
     const from = run.lines.length;
-    run.send("position startpos", "go infinite");
-    const i = await run.expect("bestmove", HEAR_MS);
-    if (run.lines[i].text !== "bestmove 0000") throw new Error(`\`go infinite\` was not refused: ${run.lines[i].text}`);
+    run.send("position startpos");
+    // a go with no limit is unbounded too
+    for (const go of ["go infinite", "go"]) {
+      const sent = run.lines.length;
+      run.send(go);
+      const i = await run.expect("bestmove", HEAR_MS, sent);
+      if (run.lines[i].text !== "bestmove 0000") throw new Error(`\`${go}\` was not refused: ${run.lines[i].text}`);
+    }
     run.send("isready");
     await run.expect("readyok", HEAR_MS, from);
     await quit(run);
-    return "bestmove 0000, then readyok";
+    return "bestmove 0000 for `go infinite` and for a bare `go`, then readyok";
   },
 
   bench,
@@ -333,6 +338,20 @@ const pollsChecks: Record<string, () => Promise<string | void>> = {
     const code = await run.exit(HEAR_MS);
     if (code !== 0) throw new Error(`exit code ${code}`);
     return `bestmove ${Math.round(run.lines[i].at - at)} ms after the end of input, then exit 0`;
+  },
+
+  /** a `go` with no limit is unbounded too: the end of input ends it, where an engine alone would search to its depth limit */
+  async "eof-no-limit"() {
+    const run = await start();
+    run.send("position startpos", "go");
+    await sleep(SEARCH_MS);
+    const before = run.find("bestmove") >= 0;
+    const at = performance.now();
+    run.end();
+    const i = await run.expect("bestmove", HEAR_MS);
+    const code = await run.exit(HEAR_MS);
+    if (code !== 0) throw new Error(`exit code ${code}`);
+    return before ? "the search ended by itself, then exit 0" : `bestmove ${Math.round(run.lines[i].at - at)} ms after the end of input, then exit 0`;
   },
 
   /** the end of input that arrives with the `go` line itself still gets a bestmove */

@@ -198,7 +198,9 @@ func handleLines(unbounded bool) int {
 // an isready that has no line queued ahead of it, reports stop, quit and
 // ponderhit in its result, and queues every other line, in order, for Getline.
 //
-// unbounded: true when only a stop ends the search (go infinite, or pondering).
+// unbounded: true when only a stop ends the search: go infinite, pondering, or
+// a go with no limit the engine acts on (no clock, movetime, depth, nodes or
+// mate).
 // At the end of input such a search gets Stop on every call. A bounded search
 // gets nothing, so it finishes and its go still gets a bestmove.
 func Poll(unbounded bool) int {

@@ -70,7 +70,9 @@ const char *uci_getline(void);
  * isready that has no line queued ahead of it, reports stop, quit and ponderhit
  * in its result, and queues every other line, in order, for uci_getline.
  *
- * unbounded: nonzero when only a stop ends the search (go infinite, or pondering).
+ * unbounded: nonzero when only a stop ends the search: go infinite, pondering,
+ * or a go with no limit the engine acts on (no clock, movetime, depth, nodes or
+ * mate).
  * At the end of input such a search gets UCI_STOP on every call. A bounded
  * search gets nothing, so it finishes and its go still gets a bestmove.
  */

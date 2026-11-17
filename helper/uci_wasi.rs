@@ -171,7 +171,9 @@ pub fn getline() -> Option<String> {
 /// `isready` that has no line queued ahead of it, reports stop, quit and
 /// ponderhit in its result, and queues every other line, in order, for `getline`.
 ///
-/// `unbounded`: whether only a stop ends the search (`go infinite`, or pondering).
+/// `unbounded`: whether only a stop ends the search: `go infinite`, pondering, or
+/// a `go` with no limit the engine acts on (no clock, movetime, depth, nodes or
+/// mate).
 /// At the end of input such a search gets `STOP` on every call. A bounded search
 /// gets nothing, so it finishes and its `go` still gets a bestmove.
 pub fn poll(unbounded: bool) -> u32 {
