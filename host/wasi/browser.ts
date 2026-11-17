@@ -10,20 +10,25 @@
  * beside it), or the one its URL's hash names (`new Worker("ratchet.js#other.wasm")`),
  * so it runs any WASI build that speaks UCI.
  *
- * A search blocks the thread that runs it, so this script runs twice. The Worker
- * the page makes receives the page's lines and writes them into a ring in shared
- * memory (wasi.ts Ring). A nested worker, made from this same script and named
- * ENGINE_THREAD, runs the build and reads the ring, so a `stop` reaches a running
- * search. Shared memory needs a cross-origin isolated page: COOP same-origin and
- * COEP require-corp, as web/serve.ts sends. A build that declares itself deaf
- * (wasi.ts profileOf) never gets a `stop` or an unbounded `go`: the outer Worker
- * answers those itself.
+ * A `stop` must reach a running search, and the Worker has three ways to deliver
+ * it. It takes the first the page and the browser allow.
  *
- * On a page that is not cross-origin isolated the Worker runs in a degraded mode
- * (degraded, below): no input reaches a running build, so each `go` runs a fresh
- * instance of it.
+ * 1. Shared memory, on a cross-origin isolated page (COOP same-origin and COEP
+ *    require-corp, as web/serve.ts sends). A search blocks the thread that runs
+ *    it, so this script runs twice. The Worker the page makes receives the page's
+ *    lines and writes them into a ring (wasi.ts Ring). A nested worker, made from
+ *    this same script and named ENGINE_THREAD, runs the build and reads the ring.
+ * 2. Suspending the build (suspended, below), on any other page whose browser has
+ *    JavaScript Promise Integration. One thread runs the build and receives the
+ *    page's lines; the build's reads and polls suspend it so those lines arrive
+ *    (wasi.ts runSuspending).
+ * 3. The degraded mode (degraded, below), the last resort: no input reaches a
+ *    running build, so each `go` runs a fresh instance of it.
+ *
+ * A build that declares itself deaf (wasi.ts profileOf) never gets a `stop` or an
+ * unbounded `go` under the first two: the Worker answers those itself.
  */
-import { DEAF_REFUSAL, Ring, Script, profileOf, runModule, runWasi, unheard } from "./wasi.ts";
+import { DEAF_REFUSAL, Queue, Ring, Script, canSuspend, profileOf, runModule, runSuspending, runWasi, unheard } from "./wasi.ts";
 
 const ENGINE_THREAD = "uci-over-wasi-engine";
 
@@ -66,19 +71,66 @@ const build = new URL(scope.location.hash.slice(1) || script.replace(/\.js$/, ".
 const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
 
 /**
- * The degraded mode, for a page without shared memory. A build's read of stdin
- * cannot wait for the page's next line there, so the build cannot stay loaded
- * between commands. This Worker keeps the session instead: it stores the
+ * Takes the page's lines for a build that hears its input, and gives each to
+ * `push` as bytes. Lines that come before the build has loaded wait. Call the
+ * returned function with the build's bytes once they are there: a deaf build's
+ * `stop` and unbounded `go` are then answered here and never pushed.
+ */
+function feed(push: (bytes: Uint8Array) => void): (wasm: ArrayBuffer) => void {
+  const encoder = new TextEncoder();
+  /** lines that came before the build had loaded and its profile was known */
+  let early: string[] | undefined = [];
+  let deaf = false;
+  const pass = (line: string) => {
+    const answer = deaf ? unheard(line, DEAF_REFUSAL) : null;
+    if (answer === null) push(encoder.encode(line + "\n"));
+    else for (const a of answer) scope.postMessage(a);
+  };
+  scope.onmessage = (e: MessageEvent) => {
+    if (early) early.push(String(e.data));
+    else pass(String(e.data));
+  };
+  return (wasm) => {
+    deaf = profileOf(new Uint8Array(wasm)) === "deaf";
+    for (const line of early!) pass(line);
+    early = undefined;
+  };
+}
+
+/**
+ * The build on this thread, suspended whenever it waits for input, for a page
+ * without shared memory whose browser has JavaScript Promise Integration. The
+ * page gets what it gets through the ring: the instance lives for the whole
+ * session, and a `stop`, an `isready` or a `ponderhit` reaches a running search.
+ */
+async function suspended(): Promise<void> {
+  const queue = new Queue();
+  const loaded = feed((bytes) => queue.push(bytes));
+  try {
+    const wasm = await (await fetch(build)).arrayBuffer();
+    const module = await WebAssembly.compile(wasm);
+    loaded(wasm);
+    await runSuspending(module, queue, [buildName], lineWriter());
+  } catch (e) {
+    scope.postMessage(`info string error: ${e}`);
+  }
+  scope.close();
+}
+
+/**
+ * The degraded mode, for a page without shared memory in a browser that cannot
+ * suspend a build. A build's read of stdin cannot wait for the page's next line
+ * there, so the build cannot stay loaded between commands. This Worker keeps the session instead: it stores the
  * `setoption` and `position` lines, and runs a fresh instance for each `go`, fed
  * `uci`, the stored lines, the `go`, then the end of input, at which a build
  * finishes its search, prints its bestmove and exits. The replayed `uci` is there
  * because a build may take no other command before it; its answer is dropped.
  *
  * What a page loses: a search hears nothing, so `stop` takes effect when the
- * search ends, and `go infinite` and `go ponder` are refused (wasi.ts unheard,
- * as for a deaf build on an isolated page); the hash table is
- * not kept from one `go` to the next; a build's start is paid on every `go`,
- * inside the move's time. The page's hard stop is Worker.terminate().
+ * search ends, and an unbounded `go` is refused (wasi.ts unheard, as for a deaf
+ * build); the hash table is not kept from one `go` to the next; a build's start
+ * is paid on every `go`, inside the move's time. The page's hard stop is
+ * Worker.terminate().
  */
 async function degraded(): Promise<void> {
   const encoder = new TextEncoder();
@@ -108,7 +160,7 @@ async function degraded(): Promise<void> {
     else if (words[0] === "ucinewgame" || words[0] === "") return;
     else if (words[0] === "quit") scope.close();
     else {
-      const answer = unheard(line, "needs a cross-origin isolated page");
+      const answer = unheard(line, "needs a cross-origin isolated page, or a browser with JavaScript Promise Integration");
       if (answer === null) run(line);
       else for (const a of answer) scope.postMessage(a);
     }
@@ -117,7 +169,7 @@ async function degraded(): Promise<void> {
     if (module) handle(String(e.data));
     else early.push(String(e.data));
   };
-  scope.postMessage("info string the page is not cross-origin isolated (COOP same-origin, COEP require-corp): stop is heard when a search ends, and the hash table is not kept between searches");
+  scope.postMessage("info string the page is not cross-origin isolated (COOP same-origin, COEP require-corp) and this browser has no JavaScript Promise Integration: stop is heard when a search ends, and the hash table is not kept between searches");
   module = await WebAssembly.compileStreaming(fetch(build)).catch(async () => WebAssembly.compile(await (await fetch(build)).arrayBuffer()));
   for (const line of early.splice(0)) handle(line);
 }
@@ -128,23 +180,11 @@ if (scope.name === ENGINE_THREAD) {
     scope.postMessage({ exit: code });
   };
 } else if (!scope.crossOriginIsolated) {
-  void degraded();
+  if (canSuspend()) void suspended();
+  else void degraded();
 } else {
   const ring = new Ring();
-  const encoder = new TextEncoder();
-  /** lines that came before the build had loaded and its profile was known */
-  let early: string[] | undefined = [];
-  let deaf = false;
-  /** a deaf build's unhearable lines are answered here; every other line goes to the ring */
-  const pass = (line: string) => {
-    const answer = deaf ? unheard(line, DEAF_REFUSAL) : null;
-    if (answer === null) ring.push(encoder.encode(line + "\n"));
-    else for (const a of answer) scope.postMessage(a);
-  };
-  scope.onmessage = (e: MessageEvent) => {
-    if (early) early.push(String(e.data));
-    else pass(String(e.data));
-  };
+  const loaded = feed((bytes) => ring.push(bytes));
   const engine = new Worker(script, { name: ENGINE_THREAD });
   engine.onmessage = (e: MessageEvent<string | { exit: number }>) => {
     if (typeof e.data === "string") scope.postMessage(e.data);
@@ -156,9 +196,7 @@ if (scope.name === ENGINE_THREAD) {
   // a classic worker script has no top-level await
   void (async () => {
     const wasm = await (await fetch(build)).arrayBuffer();
-    deaf = profileOf(new Uint8Array(wasm)) === "deaf";
+    loaded(wasm);
     engine.postMessage({ wasm, ring: ring.buffer, args: [buildName] }, [wasm]);
-    for (const line of early!) pass(line);
-    early = undefined;
   })();
 }

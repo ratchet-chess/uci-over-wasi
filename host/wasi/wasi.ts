@@ -1,9 +1,19 @@
 /**
  * The host side of UCI over WASI: the WASI preview-1 calls a WASI build imports,
- * answered on the thread that runs the engine, with stdin fed through a ring in
- * shared memory. One thread writes input into the ring: stdin's reader under Bun
- * and Node (main.ts), the page's messages in a browser. The engine's thread reads
- * it without returning to its event loop, so a `stop` reaches a running search.
+ * answered on the thread that runs the engine. A host delivers input to a running
+ * search, and this file has two ways to do it.
+ *
+ * Through shared memory (Ring): another thread writes input into a ring, stdin's
+ * reader under Bun and Node (main.ts) or the page's messages in a browser, and the
+ * engine's thread reads it without returning to its event loop.
+ *
+ * By suspending the module (Queue, runSuspending): one thread runs the engine and
+ * takes the input. `fd_read` and `poll_oneoff` are suspending imports (JavaScript
+ * Promise Integration), so a read with nothing waiting, and now and then a
+ * search's poll, hand the thread to its event loop, which delivers what waits. It
+ * needs no shared memory, so it serves a page that is not cross-origin isolated.
+ *
+ * Input known in full before the engine starts needs neither (Script).
  * Platform-neutral: no node: imports.
  *
  * A module may rely on seven calls (core/wasi.ts imports exactly these). A libc
@@ -140,6 +150,61 @@ export class Script implements Input {
   }
 }
 
+/**
+ * Input that arrives on the engine's own thread, between turns of its event loop.
+ * A reader cannot block for it; it suspends the module until `arrival` resolves
+ * (runSuspending).
+ */
+export class Queue implements Input {
+  private chunks: Uint8Array[] = [];
+  private size = 0;
+  private ended = false;
+  private waiters: (() => void)[] = [];
+
+  /** appends bytes and resumes a reader that waits */
+  push(bytes: Uint8Array): void {
+    this.chunks.push(bytes);
+    this.size += bytes.length;
+    for (const w of this.waiters.splice(0)) w();
+  }
+
+  /** marks the end of input */
+  close(): void {
+    this.ended = true;
+    for (const w of this.waiters.splice(0)) w();
+  }
+
+  available(): number {
+    return this.size;
+  }
+
+  closed(): boolean {
+    return this.ended;
+  }
+
+  /** this thread delivers the input itself, so a blocking wait would never end; a reader awaits `arrival` */
+  wait(_ms: number): void {}
+
+  read(out: Uint8Array, at: number, max: number): number {
+    let n = 0;
+    while (n < max && this.chunks.length > 0) {
+      const c = this.chunks[0];
+      const take = Math.min(max - n, c.length);
+      out.set(c.subarray(0, take), at + n);
+      n += take;
+      if (take === c.length) this.chunks.shift();
+      else this.chunks[0] = c.subarray(take);
+    }
+    this.size -= n;
+    return n;
+  }
+
+  /** resolves when bytes arrive or input ends */
+  arrival(): Promise<void> {
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }
+}
+
 /** a single-writer, single-reader byte ring in a SharedArrayBuffer */
 export class Ring implements Input {
   readonly buffer: SharedArrayBuffer;
@@ -214,13 +279,33 @@ const EVENT_CLOCK = 0;
 const EVENT_FD_READ = 1;
 const HANGUP = 1;
 
+/** JavaScript Promise Integration, where the runtime has it: an import that may suspend the module, and an export that returns a promise */
+const jspi = WebAssembly as unknown as {
+  Suspending?: new (f: (...a: number[]) => number | Promise<number>) => Function;
+  promising?: (f: Function) => (...a: unknown[]) => Promise<unknown>;
+};
+
+/** whether this runtime can suspend a module, so runSuspending works */
+export function canSuspend(): boolean {
+  return typeof jspi.Suspending === "function" && typeof jspi.promising === "function";
+}
+
+/**
+ * How often a suspended search's poll gives the event loop a turn, in milliseconds:
+ * the longest a `stop` waits beyond the engine's own polling. A turn costs
+ * microseconds, so at this rate its cost is lost in a speed read's noise
+ * (<artifacts>/scripts/wasi-port/jspi/logs/speed.log, Chrome 156 and Firefox 159).
+ */
+const TURN_MS = 5;
+
 /**
  * The seven `wasi_snapshot_preview1` calls for one instance. `args` are the command
  * line, the program's name first; `write` receives each fd_write's bytes for fd 1
  * (stdout) or 2 (stderr). Bind the instance's memory with `setMemory` before
- * calling `_start`.
+ * calling `_start`. With `suspend`, a Queue, `fd_read` and `poll_oneoff` are
+ * suspending imports that wait for that queue (runSuspending).
  */
-export function wasiImports(ring: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void) {
+export function wasiImports(ring: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void, suspend?: Queue) {
   let memory: WebAssembly.Memory | undefined;
   let view = new DataView(new ArrayBuffer(0));
   let bytes = new Uint8Array(0);
@@ -239,6 +324,48 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
   };
   const getU64 = (at: number) => view.getUint32(at, true) + view.getUint32(at + 4, true) * 0x100000000;
   const t0 = performance.now();
+
+  /** what one poll_oneoff asks for: the index of its read of stdin and of its soonest clock, -1 for none, and that clock's timeout */
+  type Asked = { readSub: number; clockSub: number; timeoutMs: number };
+  /** reads a poll's subscriptions; undefined for one this host does not answer */
+  const subscriptions = (subs: number, n: number): Asked | undefined => {
+    mem();
+    const asked: Asked = { readSub: -1, clockSub: -1, timeoutMs: Infinity };
+    for (let i = 0; i < n; i++) {
+      const s = subs + 48 * i;
+      const tag = view.getUint8(s + 8);
+      if (tag === EVENT_FD_READ && view.getUint32(s + 16, true) === 0) asked.readSub = i;
+      else if (tag === EVENT_CLOCK) {
+        const ms = getU64(s + 24) / 1e6;
+        if (ms < asked.timeoutMs) {
+          asked.timeoutMs = ms;
+          asked.clockSub = i;
+        }
+      } else return undefined;
+    }
+    return asked;
+  };
+  /** whether the poll's read of stdin has input, or its end, to report */
+  const ready = (asked: Asked) => asked.readSub >= 0 && (ring.available() > 0 || ring.closed());
+  /** writes a poll's one event, once its wait is over: stdin if it is ready, else the clock, else none */
+  const answerPoll = (asked: Asked, subs: number, events: number, nevents: number): number => {
+    mem();
+    const hit = ready(asked) ? asked.readSub : asked.clockSub;
+    if (hit < 0) {
+      view.setUint32(nevents, 0, true);
+      return ESUCCESS;
+    }
+    const e = events;
+    bytes.fill(0, e, e + 32);
+    setU64(e, getU64(subs + 48 * hit));
+    view.setUint8(e + 10, hit === asked.readSub ? EVENT_FD_READ : EVENT_CLOCK);
+    if (hit === asked.readSub) {
+      setU64(e + 16, ring.available());
+      view.setUint16(e + 24, ring.closed() ? HANGUP : 0, true);
+    }
+    view.setUint32(nevents, 1, true);
+    return ESUCCESS;
+  };
 
   const imports = {
     args_sizes_get(argc: number, size: number): number {
@@ -293,48 +420,73 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
     },
     /** stdin's readiness and relative clock timeouts: the two subscriptions a UCI loop needs */
     poll_oneoff(subs: number, events: number, n: number, nevents: number): number {
-      mem();
-      let readSub = -1;
-      let clockSub = -1;
-      let timeoutMs = Infinity;
-      for (let i = 0; i < n; i++) {
-        const s = subs + 48 * i;
-        const tag = view.getUint8(s + 8);
-        if (tag === EVENT_FD_READ && view.getUint32(s + 16, true) === 0) readSub = i;
-        else if (tag === EVENT_CLOCK) {
-          const ms = getU64(s + 24) / 1e6;
-          if (ms < timeoutMs) {
-            timeoutMs = ms;
-            clockSub = i;
-          }
-        } else return EINVAL;
+      const asked = subscriptions(subs, n);
+      if (!asked) return EINVAL;
+      if (!ready(asked) && asked.timeoutMs > 0) {
+        const end = performance.now() + asked.timeoutMs;
+        for (let left = asked.timeoutMs; !ready(asked) && left > 0; left = end - performance.now()) ring.wait(left);
       }
-      const ready = () => readSub >= 0 && (ring.available() > 0 || ring.closed());
-      if (!ready() && timeoutMs > 0) {
-        const end = performance.now() + timeoutMs;
-        for (let left = timeoutMs; !ready() && left > 0; left = end - performance.now()) ring.wait(left);
-      }
-      mem();
-      const hit = ready() ? readSub : clockSub;
-      if (hit < 0) {
-        view.setUint32(nevents, 0, true);
-        return ESUCCESS;
-      }
-      const e = events;
-      bytes.fill(0, e, e + 32);
-      setU64(e, getU64(subs + 48 * hit));
-      view.setUint8(e + 10, hit === readSub ? EVENT_FD_READ : EVENT_CLOCK);
-      if (hit === readSub) {
-        setU64(e + 16, ring.available());
-        view.setUint16(e + 24, ring.closed() ? HANGUP : 0, true);
-      }
-      view.setUint32(nevents, 1, true);
-      return ESUCCESS;
+      return answerPoll(asked, subs, events, nevents);
     },
     proc_exit(code: number): never {
       throw new Exit(code);
     },
   };
+  /**
+   * The two calls that wait for input, as suspending imports: where the blocking
+   * forms wait on the ring, these suspend the module and resume it when input
+   * arrives on this thread. A search's zero-timeout poll gives the event loop one
+   * turn at most every TURN_MS, through a MessageChannel: a timer's turn takes
+   * milliseconds, and a suspending import that returns at once reaches only the
+   * microtask queue, which delivers no message.
+   */
+  const suspending = (queue: Queue): Record<string, Function> => {
+    const channel = new MessageChannel();
+    let resume: (() => void) | undefined;
+    channel.port1.onmessage = () => {
+      const r = resume;
+      resume = undefined;
+      r?.();
+    };
+    /** one turn of the event loop: input that waits is delivered before this resolves */
+    const turn = () => new Promise<void>((resolve) => {
+      resume = resolve;
+      channel.port2.postMessage(0);
+    });
+    let lastTurn = performance.now();
+    return {
+      fd_read: new jspi.Suspending!(async (fd: number, iovs: number, iovsLen: number, nread: number) => {
+        if (fd === 0) {
+          while (queue.available() === 0 && !queue.closed()) await queue.arrival();
+          lastTurn = performance.now();
+        }
+        return imports.fd_read(fd, iovs, iovsLen, nread);
+      }),
+      poll_oneoff: new jspi.Suspending!(async (subs: number, events: number, n: number, nevents: number) => {
+        const asked = subscriptions(subs, n);
+        if (!asked) return EINVAL;
+        if (!ready(asked)) {
+          if (asked.timeoutMs === 0) {
+            if (performance.now() - lastTurn >= TURN_MS) {
+              await turn();
+              lastTurn = performance.now();
+            }
+          } else if (asked.timeoutMs < 1) {
+            // a timer rounds a short sleep up, so a sleep under a millisecond spins
+            for (const end = performance.now() + asked.timeoutMs; performance.now() < end; );
+          } else {
+            const waits: Promise<void>[] = [];
+            if (asked.readSub >= 0) waits.push(queue.arrival());
+            if (asked.timeoutMs !== Infinity) waits.push(new Promise((resolve) => setTimeout(resolve, asked.timeoutMs)));
+            await Promise.race(waits);
+            lastTurn = performance.now();
+          }
+        }
+        return answerPoll(asked, subs, events, nevents);
+      }),
+    };
+  };
+
   /**
    * The fixed answers to the rest of preview 1. Stdin, stdout and stderr are pipes
    * with no file system behind them, the environment is empty, and random bytes
@@ -378,9 +530,10 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
     /** the import object for `module`: the seven calls, a fixed answer for each other preview-1 import, and an error for an import from anywhere else */
     importsFor(module: WebAssembly.Module): WebAssembly.Imports {
       const answers: Record<string, Function> = {};
+      const waiting = suspend ? suspending(suspend) : {};
       for (const i of WebAssembly.Module.imports(module)) {
         if (i.module !== PREVIEW1) throw new Error(`the module imports ${i.module}.${i.name}; a UCI over WASI host answers only ${PREVIEW1}`);
-        answers[i.name] = (imports as Record<string, Function>)[i.name] ?? floorStubs[i.name] ?? (() => ENOSYS);
+        answers[i.name] = waiting[i.name] ?? (imports as Record<string, Function>)[i.name] ?? floorStubs[i.name] ?? (() => ENOSYS);
       }
       return { [PREVIEW1]: answers };
     },
@@ -400,6 +553,24 @@ export function runModule(module: WebAssembly.Module, input: Input, args: string
   wasi.setMemory(instance.exports.memory as WebAssembly.Memory);
   try {
     (instance.exports._start as () => void)();
+    return 0;
+  } catch (e) {
+    if (e instanceof Exit) return e.code;
+    throw e;
+  }
+}
+
+/**
+ * Runs one instance of a compiled WASI build to its end on a thread that also
+ * delivers its input: push the input into `input` from that thread's event loop.
+ * Resolves to the exit code. It needs canSuspend().
+ */
+export async function runSuspending(module: WebAssembly.Module, input: Queue, args: string[], write: (fd: number, bytes: Uint8Array) => void): Promise<number> {
+  const wasi = wasiImports(input, args, write, input);
+  const instance = new WebAssembly.Instance(module, wasi.importsFor(module));
+  wasi.setMemory(instance.exports.memory as WebAssembly.Memory);
+  try {
+    await jspi.promising!(instance.exports._start as Function)();
     return 0;
   } catch (e) {
     if (e instanceof Exit) return e.code;
