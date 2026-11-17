@@ -341,6 +341,5 @@ No check exists yet for a host. A second host is checked by running modules that
 ### What has not been run
 
 - **WebKit.** No module and no Worker has run in a WebKit browser.
-- **SIMD in a native executable.** No module with SIMD has been built through wasm2c.
 - **A host other than Ratchet's.** The fixed answers were chosen from what C, C++, Rust, Go and
   AssemblyScript modules call. Another language's runtime may call more.
