@@ -233,6 +233,11 @@ A deaf module's host answers, in the module's place, the lines its search could 
 
 The null move keeps a GUI that waits for a `bestmove` going.
 
+- **The refusal is printed at once.** If a search still runs, the refusal comes before that search's
+  `bestmove`. A GUI sends no `go` during a search, so a GUI does not see this order.
+- **A carriage return at a line's end is not part of its last word.** The host ignores it when it reads
+  a line's words, as a module does. So `stop` with a carriage return is still dropped.
+
 A host reads "unbounded" from the line's words. A `go` is unbounded when it has `infinite` or `ponder`, or
 when it has none of `wtime`, `btime`, `movetime`, `depth`, `nodes`, `mate` and `perft`. Either side's clock
 counts as a bound, so a host need not know the side to move.
