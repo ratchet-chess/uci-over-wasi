@@ -18,7 +18,7 @@
  *   // where a finished `go infinite` or ponder search waited for its stop
  *   while (!stop) if (uci_wait() & UCI_STOP) stop = 1;
  *
- * Link with -Wl,--wrap=pthread_create, so a thread start the port missed traps
+ * Link with -Wl,--wrap=pthread_create, so a thread start the edits missed traps
  * with a message instead of failing unseen.
  *
  * SPDX-License-Identifier: MIT

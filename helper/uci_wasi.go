@@ -25,7 +25,7 @@
 // would block in fd_read and hide a waiting line from a poll.
 //
 // It is one file: copy it into the engine as a package, such as
-// internal/uciwasi. Nothing here catches a `go` statement the port missed, as
+// internal/uciwasi. Nothing here catches a `go` statement the edits missed, as
 // the C form's trap catches a thread start; such a goroutine never runs.
 //
 // SPDX-License-Identifier: MIT

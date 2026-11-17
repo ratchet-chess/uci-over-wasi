@@ -1,4 +1,4 @@
-# The poll helper: porting an engine to UCI over WASI
+# The poll helper: adapting an engine to UCI over WASI
 
 `docs/uci-over-wasi.md` states what a module must do. This file is the how-to: how an existing engine becomes
 a module that meets it. The helper is one file per language, under the MIT License, so an engine under any
@@ -6,7 +6,7 @@ license can link it.
 
 ## Which engines need it
 
-| the engine | what the port needs |
+| the engine | what the adapted engine needs |
 |---|---|
 | reads its input from inside its search, through `select`, `poll` or `ioctl(FIONREAD)` | no helper: wasi-libc builds all three on `poll_oneoff`. Its own code must then meet the end-of-input and `isready` rules, and pass the check. |
 | has an input thread and a stop flag | the helper: a module has one thread |
@@ -28,7 +28,7 @@ A poll and a wait return bits: stop, quit and ponderhit. They answer `isready` t
 every other line in order for the UCI loop. Every line comes without its line feed, and without a carriage
 return before it. Each file's header has the rules in full.
 
-## Porting a thread engine
+## Adapting a thread engine
 
 1. **Run the search on the UCI thread.** Where `go` started or woke a search thread, call the search.
 2. **Read the UCI loop's lines through the helper's line read.**
@@ -40,7 +40,7 @@ return before it. Each file's header has the rules in full.
    for its `stop`.
 6. **Remove every other thread start, or make it inline:** helper threads, a threaded hash clear, timers.
 7. **Cap the options.** `Threads` has a maximum of 1. `Hash` has a maximum the module can allocate; Ratchet's
-   ports use 1024 MB.
+   adapted engines use 1024 MB.
 8. **Keep the patch small.** Put each edit under the language's guard for the target, with a comment that
    says why.
 
@@ -50,10 +50,10 @@ return before it. Each file's header has the rules in full.
 |---|---|---|
 | C, C++ | wasi-sdk's clang with `--target=wasm32-wasip1`; link the helper's object | Link with `-Wl,--wrap=pthread_create`. Set the stack with `-Wl,-z,stack-size=<bytes>`. `-msimd128` turns on SIMD. |
 | Rust | `cargo build --release --target wasm32-wasip1`; copy `uci_wasi.rs` into the crate as a module | Set the stack with `-Clink-arg=-zstack-size=<bytes>`. `-Ctarget-feature=+simd128` turns on SIMD. |
-| Go | `GOOS=wasip1 GOARCH=wasm go build`; copy `uci_wasi.go` into the tree as a package | Nothing traps a `go` statement the port missed; such a goroutine never runs. |
+| Go | `GOOS=wasip1 GOARCH=wasm go build`; copy `uci_wasi.go` into the tree as a package | Nothing traps a `go` statement the edits missed; such a goroutine never runs. |
 
 - **`--wrap=pthread_create`** sends every thread start to a function in the C helper that prints a message
-  and traps. A thread start the port missed then fails loudly. Without it, wasi-libc's `pthread_create`
+  and traps. A thread start the edits missed then fails loudly. Without it, wasi-libc's `pthread_create`
   returns an error that an engine may ignore.
 - **The stack.** The linker's default stack is small. Give the module the size of the native search
   thread's stack.
@@ -80,12 +80,12 @@ printf 'profile=deaf\n' > profile.txt
 llvm-objcopy --add-section=uci_over_wasi=profile.txt engine.wasm
 ```
 
-## Checking a port
+## Checking an adapted engine
 
 - **`bun tools/wasi-check.ts <module.wasm>`** checks the module's handling of input during a search.
   `--bench <nodes>` also runs the engine's bench from the command line and looks for that node count.
-- **The port's node counts equal the native build's.** Compare the engine's bench, or moves and node
-  counts over a position file. A difference is a bug in the port.
+- **The adapted engine's node counts equal the native build's.** Compare the engine's bench, or moves and node
+  counts over a position file. A difference is a bug in the edits.
 - **An engine whose play depends on its standard library** is the exception. `std::sort` orders equal
   scores differently under libstdc++ and libc++, so such a module differs from its native build. Its gate
   is a throwaway pair: the native and the wasm build agree once `std::stable_sort` is patched into both.

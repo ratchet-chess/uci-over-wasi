@@ -4,7 +4,8 @@ Ratchet's target is the browser, so each engine it ships is one WebAssembly file
 an engine can be. This document lists the limits in one place.
 
 - **An engine written for the target** is designed inside the limits.
-- **A port** is another engine built as a module. It loses what its native build used and a module cannot have.
+- **An adapted engine** is another engine built as a module. It loses what its native build used and a
+  module cannot have.
 
 In return, one file runs on every OS and CPU. Its node signature is equal under every runtime, and
 `tools/browser-bench.ts` stops if a browser's differs.
@@ -12,7 +13,7 @@ In return, one file runs on every OS and CPU. Its node signature is equal under 
 Two other documents own the rules, and this document points at them:
 
 - `docs/uci-over-wasi.md` states what a module must do. This document uses its terms: module, host, GUI.
-- `helper/README.md` is the how-to for a port, with each edit a port needs.
+- `helper/README.md` is the how-to for an adapted engine, with each edit it needs.
 
 This document states directions only. § Where the sizes are names the measurements.
 
@@ -70,7 +71,7 @@ different CPUs.
 | The download | A page downloads the module, with any net inside it. | |
 | The host gives the clock | A browser's clock moves in coarse steps. | `results/browser.md`, clock step |
 | Input arrives only when the module polls | What reaches a running search depends on the page. | `docs/uci-over-wasi.md` § Delivering input during a search, § In a browser |
-| Another compiler and standard library | Play that depends on the standard library differs from the native build's. | `helper/README.md` § Checking a port |
+| Another compiler and standard library | Play that depends on the standard library differs from the native build's. | `helper/README.md` § Checking an adapted engine |
 
 A native executable removes one of these limits, outside a browser. A C compiler compiles the module's code
 there, so it searches faster than under a runtime. It keeps every other limit, because it is the same
@@ -78,13 +79,13 @@ module. Ratchet makes one only from its own modules (`docs/uci-over-wasi.md` § 
 
 ## Limits that an edit removes
 
-Each row is an edit to a port. An engine written for the target starts in the right-hand form.
+Each row is an edit that adapts an engine. An engine written for the target starts in the right-hand form.
 
 | a native engine has | the edit | where the how-to is |
 |---|---|---|
-| a search thread and an input thread | Run the search on the UCI thread, and poll through the poll helper. | `helper/README.md` § Porting a thread engine |
+| a search thread and an input thread | Run the search on the UCI thread, and poll through the poll helper. | `helper/README.md` § Adapting a thread engine |
 | no input read during a search | Declare the deaf profile. The code stays as it is. | `helper/README.md` § A deaf engine |
-| other thread starts, such as a threaded hash clear | Remove each one, or make it inline. | `helper/README.md` § Porting a thread engine |
+| other thread starts, such as a threaded hash clear | Remove each one, or make it inline. | `helper/README.md` § Adapting a thread engine |
 | a net read from a file | Compile the net into the module. | `docs/uci-over-wasi.md` § What a module may rely on |
 | a net compiled in through incbin | Use C23 `#embed`, because incbin's assembler block has no WebAssembly form. | `helper/README.md` § Building |
 | a net on SSE or AVX2 intrinsics only | Write a 128-bit path. Until then, the net runs on its scalar path. | `helper/README.md` § Building |
@@ -97,10 +98,10 @@ Each row is an edit to a port. An engine written for the target starts in the ri
 
 - **An engine written for the target** loses only speed against a native engine of the same design. Its
   design already follows the limits: one thread, magic multiplication, no file.
-- **A port loses every row above that its native build used.** At a fixed depth it searches its native
-  build's nodes, unless its play depends on the standard library (`helper/README.md` § Checking a port).
-  On a clock it is slower, and it plays its endgames without tablebases.
-- **So a port's rating is not its native build's rating.**
+- **An adapted engine loses every row above that its native build used.** At a fixed depth it searches its
+  native build's nodes, unless its play depends on the standard library (`helper/README.md` § Checking an
+  adapted engine). On a clock it is slower, and it plays its endgames without tablebases.
+- **So an adapted engine's rating is not its native build's rating.**
 
 ## Where the sizes are
 

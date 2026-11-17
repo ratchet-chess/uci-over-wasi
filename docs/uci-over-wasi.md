@@ -13,7 +13,7 @@ engines and other hosts may adopt it.
 - **Part 2** is for a host's author: what a host must answer and deliver.
 - **Part 3** describes Ratchet's own hosts. It is a record of one implementation, not a rule.
 
-`helper/README.md` is the how-to for porting an existing engine.
+`helper/README.md` is the how-to for adapting an existing engine.
 
 ## Terms
 
@@ -157,7 +157,7 @@ the source. A deaf module needs the section: its host must keep `stop` and an un
 ### UCI options
 
 - **`Threads`** has a maximum of 1, if the engine has the option.
-- **`Hash`** has a maximum the module can allocate. Ratchet's ports cap it at 1024 MB. A table size wraps at
+- **`Hash`** has a maximum the module can allocate. Ratchet's adapted engines cap it at 1024 MB. A table size wraps at
   4096 MB in a 32-bit module, and an allocation can fail well below that.
 
 ## Part 2: the host
