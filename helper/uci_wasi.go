@@ -150,6 +150,7 @@ func isCommand(line, word string) bool {
 
 // Getline returns the next line of input, without its line end: a line queued
 // during a search first, else it waits for one. ok is false at the end of input.
+// A line end is a line feed, with or without a carriage return before it.
 func Getline() (line string, ok bool) {
 	for {
 		if line, ok = takeLine(&queue); ok {

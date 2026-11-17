@@ -25,7 +25,8 @@ ahead, so it hides a waiting line from the poll.
 | `uci_wait()` | `wait()` | `Wait()` | waits for input or its end, then handles it as a poll of an unbounded search does |
 
 A poll and a wait return bits: stop, quit and ponderhit. They answer `isready` themselves, and they queue
-every other line in order for the UCI loop. Each file's header has the rules in full.
+every other line in order for the UCI loop. Every line comes without its line feed, and without a carriage
+return before it. Each file's header has the rules in full.
 
 ## Porting a thread engine
 

@@ -154,7 +154,8 @@ impl Input {
 }
 
 /// The next line of input, without its line end: a line queued during a search
-/// first, else it waits for one. `None` at the end of input.
+/// first, else it waits for one. `None` at the end of input. A line end is a
+/// line feed, with or without a carriage return before it.
 pub fn getline() -> Option<String> {
     INPUT.with_borrow_mut(|input| loop {
         if let Some(line) = input.queue.pop_front().or_else(|| input.take_line()) {

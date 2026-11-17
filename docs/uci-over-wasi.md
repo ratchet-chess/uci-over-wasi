@@ -50,6 +50,7 @@ The host calls `_start` once. The module's whole session runs inside that call.
 | fd 2, standard error | diagnostics, which no GUI reads |
 
 - The module writes each line in full before it waits for input. A line left in a buffer never reaches the GUI.
+- The module accepts a carriage return before a line feed, and ignores it. A GUI on Windows may send one.
 - The command line is the module's own. The first argument is the module's name. A host passes the rest
   unchanged, so an argument such as `bench` works as it does natively.
 
@@ -317,6 +318,7 @@ seven calls only, so it runs Ratchet's own modules and not every module that mee
   its cases; `quit`; and ponder.
 - **For a deaf module:** a bounded search ends by itself, and the host keeps `stop` and an unbounded `go`
   away from it.
+- **For both:** a session whose lines each end with a carriage return and a line feed.
 
 ```sh
 bun tools/wasi-check.ts <module.wasm> [--bench <nodes>]

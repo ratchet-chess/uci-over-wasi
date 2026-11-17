@@ -11,6 +11,8 @@
  * Its checks: a bounded search ends by itself, lines sent during it are handled
  * after it in order, the end of input ends the module after its bestmove, and
  * the host keeps a `stop` and an unbounded `go` from it.
+ * Both profiles get a session whose lines end with a carriage return and a
+ * line feed.
  *
  * --bench runs the module's bench from its command line, once with stdin at
  * its end and once with stdin open, and looks for <nodes> in each output: the
@@ -171,6 +173,39 @@ async function bench(): Promise<string> {
   return `${benchNodes} nodes with stdin at its end and open`;
 }
 
+/** a session whose every line ends with a carriage return and a line feed, as a GUI on Windows may send it */
+async function crlf(): Promise<string> {
+  const cr = (...lines: string[]) => lines.map((l) => l + "\r");
+  const run = new Run(module);
+  run.send(...cr("uci"));
+  await run.expect("uciok", START_MS);
+  run.send(...cr("isready"));
+  await run.expect("readyok", START_MS);
+  run.send(...cr("position startpos moves e2e4", "go depth 1"));
+  const first = await run.expect("bestmove", START_MS);
+  const move = run.lines[first].text.split(" ")[1];
+  if (!/^[a-h][78]/.test(move)) throw new Error(`the last move of the \`position\` line was lost: after 1. e4 the module played ${move}`);
+  if (profile === "polls") {
+    run.send(...cr("go infinite"));
+    await sleep(SEARCH_MS);
+    if (run.find("bestmove", first + 1) >= 0) throw new Error("`go infinite` printed a bestmove before `stop`");
+    run.send(...cr("stop"));
+    await run.expect("bestmove", HEAR_MS, first + 1);
+  } else {
+    // the host reads these two itself
+    const from = run.lines.length;
+    run.send(...cr("stop", "go infinite"));
+    const refused = await run.expect("bestmove", HEAR_MS, from);
+    if (run.lines[refused].text !== "bestmove 0000") throw new Error(`\`go infinite\` was not refused: ${run.lines[refused].text}`);
+    run.send(...cr("isready"));
+    await run.expect("readyok", HEAR_MS, from);
+  }
+  run.send(...cr("quit"));
+  const code = await run.exit(HEAR_MS);
+  if (code !== 0) throw new Error(`exit code ${code}`);
+  return `reply ${move}, ${profile === "polls" ? "`stop` heard" : "`stop` and `go infinite` kept away"}, then exit 0`;
+}
+
 /** a bounded search long enough that the lines after it arrive while it runs, on most engines */
 const DEAF_GO = "go depth 10";
 
@@ -252,6 +287,8 @@ const deafChecks: Record<string, () => Promise<string | void>> = {
     await quit(run);
     return "bestmove 0000 for `go infinite` and for a bare `go`, then readyok";
   },
+
+  crlf,
 
   bench,
 };
@@ -410,6 +447,8 @@ const pollsChecks: Record<string, () => Promise<string | void>> = {
     await quit(run);
     return `bestmove ${Math.round(run.lines[i].at - at)} ms after ponderhit; stop ends a ponder search`;
   },
+
+  crlf,
 
   bench,
 };
