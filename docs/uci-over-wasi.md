@@ -288,6 +288,10 @@ engine.postMessage("uci");
 `new Worker("ratchet.js#other.wasm")` loads another module, so one script runs any module. The module's
 standard error goes to the console.
 
+A module that fails to load or compile ends the session. So does a failure while it runs, in the first two ways
+below. The Worker sends one `info string error:` line that names the cause, and then closes. In the degraded mode,
+a `go` whose instance fails sends that line, and the next `go` starts a fresh instance.
+
 The Worker delivers input in the first way the page and the browser allow.
 
 ```mermaid

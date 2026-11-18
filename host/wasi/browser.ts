@@ -71,6 +71,18 @@ const build = new URL(scope.location.hash.slice(1) || script.replace(/\.js$/, ".
 const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
 
 /**
+ * The build's bytes. A missing build must fail here: fetch resolves on a 404, and a dev server may
+ * answer a missing file with its page, so neither status nor bytes can be passed on unchecked.
+ */
+async function fetchBuild(): Promise<ArrayBuffer> {
+  const res = await fetch(build);
+  if (!res.ok) throw new Error(`${buildName}: ${res.status} ${res.statusText}`);
+  const wasm = await res.arrayBuffer();
+  if (!WebAssembly.validate(wasm)) throw new Error(`${buildName} is not a WebAssembly module`);
+  return wasm;
+}
+
+/**
  * Takes the page's lines for a build that hears its input, and gives each to
  * `push` as bytes. Lines that come before the build has loaded wait. Call the
  * returned function with the build's bytes once they are there: a deaf build's
@@ -107,7 +119,7 @@ async function suspended(): Promise<void> {
   const queue = new Queue();
   const loaded = feed((bytes) => queue.push(bytes));
   try {
-    const wasm = await (await fetch(build)).arrayBuffer();
+    const wasm = await fetchBuild();
     const module = await WebAssembly.compile(wasm);
     loaded(wasm);
     await runSuspending(module, queue, [buildName], lineWriter());
@@ -171,7 +183,7 @@ async function degraded(): Promise<void> {
   };
   scope.postMessage("info string the page is not cross-origin isolated (COOP same-origin, COEP require-corp) and this browser has no JavaScript Promise Integration: stop is heard when a search ends, and the hash table is not kept between searches");
   try {
-    const wasm = await (await fetch(build)).arrayBuffer();
+    const wasm = await fetchBuild();
     // every build is run as a deaf one here, but a profile this host does not know is still not run
     profileOf(new Uint8Array(wasm));
     module = await WebAssembly.compile(wasm);
@@ -185,7 +197,13 @@ async function degraded(): Promise<void> {
 
 if (scope.name === ENGINE_THREAD) {
   scope.onmessage = async (e: MessageEvent<{ wasm: ArrayBuffer; ring: SharedArrayBuffer; args: string[] }>) => {
-    const code = await runWasi(e.data.wasm, new Ring(e.data.ring), e.data.args, lineWriter());
+    // a build that does not compile or traps must still end the session, or the page waits forever
+    let code = 1;
+    try {
+      code = await runWasi(e.data.wasm, new Ring(e.data.ring), e.data.args, lineWriter());
+    } catch (err) {
+      scope.postMessage(`info string error: ${err}`);
+    }
     scope.postMessage({ exit: code });
   };
 } else if (!scope.crossOriginIsolated) {
@@ -205,7 +223,7 @@ if (scope.name === ENGINE_THREAD) {
   // a classic worker script has no top-level await
   void (async () => {
     try {
-      const wasm = await (await fetch(build)).arrayBuffer();
+      const wasm = await fetchBuild();
       loaded(wasm);
       engine.postMessage({ wasm, ring: ring.buffer, args: [buildName] }, [wasm]);
     } catch (e) {
