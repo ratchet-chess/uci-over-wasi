@@ -14,7 +14,8 @@ the code, and run the checks. `AGENTS.md` holds the rules they work under.
 been run, in the spec, lists what is untested.
 
 **License:** everything outside `adapted/` is under the MIT License, the spec included. See `LICENSE`. Each folder
-of `adapted/` holds edits to another engine's code, under that engine's license.
+of `adapted/` holds edits to another engine's code, under that engine's license. Most of those engines are under the GNU
+General Public License, version 3, and `adapted/COPYING` has its text.
 
 ## What is here
 

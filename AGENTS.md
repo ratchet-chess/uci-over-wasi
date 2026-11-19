@@ -75,4 +75,5 @@ tools/adapted.sh check adapted/<folder>                   # both builds, their c
 ## License
 
 - **Everything outside `adapted/` is under the MIT License,** the spec included. `LICENSE` has the text.
+- **A folder of `adapted/` is under its engine's license.** `adapted/COPYING` has the text of the GNU General Public License, version 3.
 - **A new file of the host, the checker or the helper opens with the SPDX line and the copyright line.**

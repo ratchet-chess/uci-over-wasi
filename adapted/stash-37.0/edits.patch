@@ -1,0 +1,195 @@
+--- orig/include/worker.h
++++ src/include/worker.h
+@@ -189,6 +189,10 @@
+ void wpool_start_aux_workers(WorkerPool *wpool);
+ void wpool_wait_aux_workers(WorkerPool *wpool);
+ void wpool_check_time(WorkerPool *wpool);
++#ifdef __wasi__ // UCI over WASI: the search runs on the UCI thread and hears input through these
++void wasi_poll(void);
++void wasi_wait(void);
++#endif
+ 
+ // These functions can be called from any thread.
+ 
+--- orig/sources/search.c
++++ src/sources/search.c
+@@ -247,7 +247,11 @@
+     // us the `stop` in infinite mode or `ponderhit` in ponder mode.
+     while (!wpool_is_stopped(worker->pool)
+            && (wpool_is_pondering(worker->pool) || search_params->infinite))
++#ifdef __wasi__ // UCI over WASI: no other thread can set the stop, so wait on input
++        wasi_wait();
++#else
+         ;
++#endif
+ 
+     wpool_stop(worker->pool);
+ 
+--- orig/sources/uci.c
++++ src/sources/uci.c
+@@ -24,6 +24,9 @@
+ #include "syncio.h"
+ #include "wdl.h"
+ #include "wmalloc.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ #define UCI_VERSION "v37.0"
+ 
+@@ -75,7 +78,11 @@
+         strview_from_cstr("Threads"),
+         &uci->option_values.threads,
+         1,
++#ifdef __wasi__ // UCI over WASI: one thread
++        1,
++#else
+         512,
++#endif
+         false,
+         on_threads_change,
+         (void *)uci
+@@ -85,7 +92,11 @@
+         strview_from_cstr("Hash"),
+         &uci->option_values.hash,
+         1,
++#ifdef __wasi__ // UCI over WASI: a 32-bit address space
++        1024,
++#else
+         33554432,
++#endif
+         false,
+         on_hash_change,
+         (void *)uci
+@@ -408,11 +419,19 @@
+ 
+         string_init(&line);
+ 
++#ifdef __wasi__ // UCI over WASI: the helper owns stdin, so stdio never reads it
++        for (const char *input; (input = uci_getline()) != NULL;) {
++            if (!uci_exec_command(&uci, strview_from_cstr(input))) {
++                break;
++            }
++        }
++#else
+         while (string_getline(stdin, &line)) {
+             if (!uci_exec_command(&uci, strview_from_string(&line))) {
+                 break;
+             }
+         }
++#endif
+ 
+         string_destroy(&line);
+     }
+--- orig/sources/worker.c
++++ src/sources/worker.c
+@@ -25,6 +25,34 @@
+ #include "search.h"
+ #include "wmalloc.h"
+ 
++#ifdef __wasi__ // UCI over WASI: what uci_stop and uci_ponderhit do for the same commands
++#include "uci_wasi.h"
++static WorkerPool *WasiPool;
++
++// UCI over WASI: whether only a stop ends this go, besides pondering: it is infinite, or it
++// has no limit at all. It is read when the search starts, before it fills in its default
++// depth and nodes.
++static bool WasiUnbounded;
++
++static void wasi_heard(int heard) {
++    if (heard & UCI_STOP) {
++        wpool_stop(WasiPool);
++    }
++
++    if (heard & UCI_PONDERHIT) {
++        wpool_ponderhit(WasiPool);
++    }
++}
++
++void wasi_poll(void) {
++    wasi_heard(uci_poll(WasiUnbounded || wpool_is_pondering(WasiPool)));
++}
++
++void wasi_wait(void) {
++    wasi_heard(uci_wait());
++}
++#endif
++
+ void pv_line_init(PvLine *pv_line) {
+     pv_line->length = 0;
+ }
+@@ -104,6 +132,7 @@
+         exit(EXIT_FAILURE);
+     }
+ 
++#ifndef __wasi__
+     if (pthread_create(
+             &worker->thread,
+             &worker->pool->worker_pthread_attr,
+@@ -113,6 +142,9 @@
+         perror("Unable to initialize worker thread");
+         exit(EXIT_FAILURE);
+     }
++#else // UCI over WASI: one thread
++    worker->is_searching = false;
++#endif
+ 
+     atomic_init(&worker->nodes, 0);
+     worker_init_new_game(worker);
+@@ -122,12 +154,14 @@
+     pthread_mutex_lock(&worker->mutex);
+     worker->must_exit = true;
+     pthread_mutex_unlock(&worker->mutex);
++#ifndef __wasi__
+     worker_start_searching(worker);
+ 
+     if (pthread_join(worker->thread, NULL)) {
+         perror("Unable to stop worker");
+         exit(EXIT_FAILURE);
+     }
++#endif
+ 
+     pthread_mutex_destroy(&worker->mutex);
+     pthread_cond_destroy(&worker->condvar);
+@@ -152,6 +186,21 @@
+ }
+ 
+ void worker_start_searching(Worker *worker) {
++#ifdef __wasi__ // UCI over WASI: the search runs on the calling thread, the UCI thread
++    const SearchParams *params = &worker->pool->search_params;
++
++    WasiUnbounded = params->infinite
++                 || !(params->tc_is_set || params->movetime || params->depth || params->nodes
++                      || params->mate);
++    worker->is_searching = true;
++    if (worker->thread_index == 0) {
++        main_worker_search(worker);
++    } else {
++        worker_search(worker);
++    }
++    worker->is_searching = false;
++    return;
++#endif
+     pthread_mutex_lock(&worker->mutex);
+     worker->is_searching = true;
+     pthread_cond_signal(&worker->condvar);
+@@ -226,6 +275,9 @@
+         exit(EXIT_FAILURE);
+     }
+ 
++#ifdef __wasi__
++    WasiPool = wpool;
++#endif
+     wpool->worker_count = 0;
+     wpool->worker_list = NULL;
+     tt_init(&wpool->tt);
+@@ -347,6 +399,9 @@
+     }
+ 
+     wpool->check_nodes = wpool->timeman.delay_check_nodes;
++#ifdef __wasi__ // UCI over WASI: the UCI thread is this thread, so the search reads its input
++    wasi_poll();
++#endif
+ 
+     if (wpool->search_params.infinite || wpool_is_stopped(wpool)) {
+         return;

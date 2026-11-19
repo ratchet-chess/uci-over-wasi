@@ -23,3 +23,5 @@ SOFTWARE.
 This license covers every file in this repository outside adapted/. Each folder
 in adapted/ holds edits to another engine's code, under that engine's own
 license, which the folder's pin file names.
+adapted/COPYING has the text of the GNU General Public License, version 3,
+which is the license of most of those engines.

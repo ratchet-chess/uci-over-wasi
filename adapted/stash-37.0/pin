@@ -1,0 +1,8 @@
+# Stash 37.0, by Morgan Houppin
+url=https://gitlab.com/mhouppin/stash-bot
+commit=077a93828fee354853ffac322f178d1a4f1670ff
+dir=src
+license=GPL-3.0-or-later
+module=stash.wasm
+compare=bench
+nodes=4646465
