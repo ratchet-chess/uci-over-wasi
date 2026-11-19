@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A runner shares its host with other work and has one CPU, so every build here runs one job at a time.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Toolchain archives
+        uses: actions/cache@v4
+        with:
+          path: tmp/toolchains/archives
+          key: wasi-sdk-${{ hashFiles('tools/toolchains.txt') }}
+
+      - name: wasi-sdk
+        run: tools/toolchains.sh fetch wasi-sdk && tools/toolchains.sh unpack wasi-sdk
+
+      - name: The helper, with the smallest module on it, through the checker
+        run: tools/adapted.sh echo
+
+  # A request to add an adapted engine: each folder of adapted/ that the change touches is built twice, as the
+  # native engine and as the module, from the pinned commit. The two are compared, and the checker runs.
+  adapted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: The adapted engines this change touches
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || BASE=$(git rev-parse HEAD~1)
+          folders=$(git diff --name-only "$BASE"...HEAD -- adapted/ | cut -d/ -f1-2 | sort -u | while read -r f; do [ -f "$f/pin" ] && printf '%s ' "$f"; done)
+          echo "folders=$folders" >> "$GITHUB_OUTPUT"
+          echo "changed: ${folders:-none}"
+
+      - name: Setup Bun
+        if: steps.changed.outputs.folders != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Toolchain archives
+        if: steps.changed.outputs.folders != ''
+        uses: actions/cache@v4
+        with:
+          path: tmp/toolchains/archives
+          key: toolchains-${{ hashFiles('tools/toolchains.txt') }}
+
+      - name: Toolchains
+        if: steps.changed.outputs.folders != ''
+        run: tools/toolchains.sh fetch && tools/toolchains.sh unpack
+
+      - name: Fetch, build, compare and check
+        if: steps.changed.outputs.folders != ''
+        run: |
+          for folder in ${{ steps.changed.outputs.folders }}; do
+            echo "== $folder"
+            tools/adapted.sh fetch "$folder"
+            tools/adapted.sh check "$folder"
+          done
