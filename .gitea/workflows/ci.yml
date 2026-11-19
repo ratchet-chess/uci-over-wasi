@@ -24,12 +24,6 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
-      - name: Toolchain archives
-        uses: actions/cache@v4
-        with:
-          path: tmp/toolchains/archives
-          key: wasi-sdk-${{ hashFiles('tools/toolchains.txt') }}
-
       - name: wasi-sdk
         run: tools/toolchains.sh fetch wasi-sdk && tools/toolchains.sh unpack wasi-sdk
 
@@ -60,13 +54,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-
-      - name: Toolchain archives
-        if: steps.changed.outputs.folders != ''
-        uses: actions/cache@v4
-        with:
-          path: tmp/toolchains/archives
-          key: toolchains-${{ hashFiles('tools/toolchains.txt') }}
 
       - name: Toolchains
         if: steps.changed.outputs.folders != ''

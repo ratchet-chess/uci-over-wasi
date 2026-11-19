@@ -32,19 +32,21 @@ case "$cmd" in
       wanted "$name" || continue
       file=$T/archives/${url##*/}
       echo "$sha  $file" | sha256sum -c --quiet -
+      # --no-same-owner: as root in a container, tar would give each file the archive's owner, whom the host's user
+      # cannot delete
       case "$name" in
         rust)
           # a Rust archive holds components, each a tree to put over the others; its installer is not run
           rm -rf "$T/unpack" && mkdir -p "$T/unpack" "$T/rust"
-          tar -xzf "$file" -C "$T/unpack" --strip-components=1
+          tar -xzf "$file" -C "$T/unpack" --strip-components=1 --no-same-owner
           while read -r part; do
-            (cd "$T/unpack/$part" && tar -cf - --exclude=./manifest.in .) | tar -xf - -C "$T/rust"
+            (cd "$T/unpack/$part" && tar -cf - --exclude=./manifest.in .) | tar -xf - -C "$T/rust" --no-same-owner
           done < "$T/unpack/components"
           rm -rf "$T/unpack"
           ;;
         *)
           rm -rf "$T/$name" && mkdir -p "$T/$name"
-          tar -xzf "$file" -C "$T/$name" --strip-components=1
+          tar -xzf "$file" -C "$T/$name" --strip-components=1 --no-same-owner
           ;;
       esac
     done
