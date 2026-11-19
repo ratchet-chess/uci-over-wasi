@@ -1,0 +1,195 @@
+--- orig/src/include/timeman.h
++++ src/src/include/timeman.h
+@@ -86,6 +86,9 @@
+ void timeman_init(const board_t *board, timeman_t *tm, goparams_t *params, clock_t start);
+ void timeman_update(timeman_t *tm, const board_t *board, move_t bestmove, score_t score);
+ void check_time(void);
++#ifdef __wasi__
++void wasi_wait(void);
++#endif
+ 
+ INLINED bool timeman_can_stop_search(timeman_t *tm, clock_t cur)
+ {
+--- orig/src/include/uci.h
++++ src/src/include/uci.h
+@@ -40,6 +40,11 @@
+ # define MAX_HASH 2048
+ # endif
+ 
++# ifdef __wasi__ // UCI over WASI: a 32-bit address space
++#  undef MAX_HASH
++#  define MAX_HASH 1024
++# endif
++
+ enum e_egn_mode
+ {
+     WAITING,
+--- orig/src/sources/engine.c
++++ src/src/sources/engine.c
+@@ -324,8 +324,12 @@
+ 
+     if (SearchParams.infinite)
+         while (!search_should_abort())
++#ifdef __wasi__ // UCI over WASI: no other thread can set the stop, so wait on input
++            wasi_wait();
++#else
+             if (!worker->idx)
+                 check_time();
++#endif
+ 
+     // The main thread sends the bestmove here and wait for all workers to stop activity
+ 
+@@ -355,14 +359,18 @@
+     // Inform the UCI thread that we're ready to run
+ 
+     pthread_mutex_lock(&EngineMutex);
++#ifndef __wasi__ // UCI over WASI: main has set WAITING, and uci_go has just set THINKING for this go
+     EngineMode = WAITING;
+     pthread_cond_broadcast(&EngineCond);
++#endif
+ 
+     // Loop while we're not notified that a "quit" command has been issued
+ 
+     while (EngineSend != DO_ABORT)
+     {
++#ifndef __wasi__ // UCI over WASI: uci_go calls this after it sets DO_THINK, so nothing is waited for
+         pthread_cond_wait(&EngineCond, &EngineMutex);
++#endif
+ 
+         if (EngineSend == DO_THINK)
+         {
+@@ -384,6 +392,9 @@
+             EngineMode = WAITING;
+             pthread_cond_broadcast(&EngineCond);
+         }
++#ifdef __wasi__ // UCI over WASI: one pass runs one go, then uci_go returns
++        break ;
++#endif
+     }
+ 
+     pthread_mutex_unlock(&EngineMutex);
+--- orig/src/sources/main.c
++++ src/src/sources/main.c
+@@ -60,6 +60,7 @@
+ 
+     // Start the main engine thread
+ 
++#ifndef __wasi__ // UCI over WASI: one thread; uci_go runs each search on this one
+     pthread_t engineThread;
+ 
+     pthread_attr_init(&WorkerSettings);
+@@ -74,6 +75,9 @@
+     // Wait for the engine thread to be ready
+ 
+     wait_search_end();
++#else // UCI over WASI: what the engine thread does when it starts
++    EngineMode = WAITING;
++#endif
+ 
+     uci_loop(argc, argv);
+ 
+--- orig/src/sources/timeman.c
++++ src/src/sources/timeman.c
+@@ -21,6 +21,26 @@
+ #include "imath.h"
+ #include "lazy_smp.h"
+ #include "timeman.h"
++#ifdef __wasi__
++# include "uci_wasi.h"
++
++extern int wasi_unbounded;
++
++// UCI over WASI: the search runs on the UCI thread, so it reads the input at its
++// periodic check, and acts on it as uci_stop and uci_quit do.
++static void wasi_heard(int heard)
++{
++    if (heard & UCI_QUIT)
++        uci_quit(NULL);
++    else if (heard & UCI_STOP)
++        uci_stop(NULL);
++}
++
++void wasi_wait(void)
++{
++    wasi_heard(uci_wait());
++}
++#endif
+ 
+ // Scaling table based on the move type
+ 
+@@ -167,6 +187,9 @@
+     // Reset check counter
+ 
+     WPool.checks = 1000;
++#ifdef __wasi__ // UCI over WASI: the input is read here; see wasi_heard
++    wasi_heard(uci_poll(wasi_unbounded));
++#endif
+ 
+     // If we are in infinite mode, or the stop has already been set,
+     // we can safely return.
+--- orig/src/sources/uci.c
++++ src/src/sources/uci.c
+@@ -27,6 +27,26 @@
+ #include "option.h"
+ #include "tt.h"
+ #include "uci.h"
++#ifdef __wasi__
++# include "uci_wasi.h"
++
++// UCI over WASI: the helper owns stdin. The line is copied, since the loop cuts
++// it up and a poll during the search reuses the helper's buffer, and it gets back
++// the line end that fgets keeps, which the option parser looks for.
++static char *wasi_fgets(char *line, size_t size)
++{
++    const char *input = uci_getline();
++
++    if (!input)
++        return (NULL);
++    snprintf(line, size, "%s\n", input);
++    return (line);
++}
++
++// UCI over WASI: whether only a stop ends this go: it is infinite, or it has no
++// limit at all. It is read in uci_go, before engine_go fills in its default depth and nodes.
++int wasi_unbounded;
++#endif
+ 
+ const cmdlink_t commands[] =
+ {
+@@ -399,6 +419,12 @@
+ 
+     pthread_cond_broadcast(&EngineCond);
+     pthread_mutex_unlock(&EngineMutex);
++#ifdef __wasi__ // UCI over WASI: the search runs on the UCI thread, before uci_go returns
++    wasi_unbounded = SearchParams.infinite || !(SearchParams.wtime || SearchParams.btime
++        || SearchParams.winc || SearchParams.binc || SearchParams.movetime
++        || SearchParams.depth || SearchParams.nodes || SearchParams.mate);
++    engine_thread(NULL);
++#endif
+     free(copy);
+ }
+ 
+@@ -502,7 +528,11 @@
+ void uci_loop(int argc, char **argv)
+ {
+     init_option_list(&OptionList);
++#ifdef __wasi__ // UCI over WASI: one thread
++    add_option_spin_int(&OptionList, "Threads", &Options.threads, 1, 1, &on_thread_set);
++#else
+     add_option_spin_int(&OptionList, "Threads", &Options.threads, 1, 256, &on_thread_set);
++#endif
+     add_option_spin_int(&OptionList, "Hash", &Options.hash, 1, MAX_HASH, &on_hash_set);
+     add_option_spin_int(&OptionList, "Move Overhead", &Options.moveOverhead, 0, 30000, NULL);
+     add_option_spin_int(&OptionList, "MultiPV", &Options.multiPv, 1, 500, NULL);
+@@ -518,7 +548,11 @@
+     {
+         char *line = malloc(16384);
+ 
++#ifdef __wasi__ // UCI over WASI: the helper owns stdin, so stdio never reads it
++        while (wasi_fgets(line, 16384) != NULL)
++#else
+         while (fgets(line, 16384, stdin) != NULL)
++#endif
+             if (execute_uci_cmd(line) == 0)
+                 break ;
+ 
