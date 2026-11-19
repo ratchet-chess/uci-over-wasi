@@ -1,0 +1,217 @@
+--- orig/src/config.h
++++ src/src/config.h
+@@ -43,7 +43,12 @@
+ #define NNUE_CACHE_SIZE 2
+ 
+ /* The maximum number of supported worker threads */
++#ifdef __wasi__
++/* UCI over WASI: a WASI build has one thread */
++#define MAX_WORKERS 1
++#else
+ #define MAX_WORKERS 512
++#endif
+ 
+ /* The maximum number of MultiPV lines that can be reported */
+ #define MAX_MULTIPV_LINES 32
+--- orig/src/egtb.c
++++ src/src/egtb.c
+@@ -16,6 +16,34 @@
+  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ #include "egtb.h"
++#ifdef __wasi__
++/* UCI over WASI: Fathom needs mmap, which WASI lacks, so no tablebase is ever probed */
++void egtb_init(char *path)
++{
++    (void)path;
++}
++
++bool egtb_should_probe(struct position *pos)
++{
++    (void)pos;
++    return false;
++}
++
++bool egtb_probe_dtz_tables(struct position *pos, uint32_t *move, int *score)
++{
++    (void)pos;
++    (void)move;
++    (void)score;
++    return false;
++}
++
++bool egtb_probe_wdl_tables(struct position *pos, int *score)
++{
++    (void)pos;
++    (void)score;
++    return false;
++}
++#else
+ #include "tbprobe.h"
+ #include "bitboard.h"
+ 
+@@ -137,4 +165,4 @@
+ 
+     return true;
+ }
+-
++#endif
+--- orig/src/engine.c
++++ src/src/engine.c
+@@ -38,6 +38,9 @@
+ #include "position.h"
+ #include "hash.h"
+ #include "egtb.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ /* The maximum length of a line in the configuration file */
+ #define CFG_MAX_LINE_LENGTH 1024
+@@ -270,10 +273,23 @@
+ {
+     char *iter;
+ 
++#ifdef __wasi__
++    /* UCI over WASI: the helper owns stdin, so its line is copied here */
++    const char *line = uci_getline();
++    if (line == NULL) {
++        return NULL;
++    }
++    strncpy(rx_buffer, line, RX_BUFFER_SIZE-1);
++    rx_buffer[RX_BUFFER_SIZE-1] = '\0';
++    if (rx_buffer[0] == '\0') {
++        return rx_buffer;
++    }
++#else
+     /* Read command from stdin */
+     if (fgets(rx_buffer, RX_BUFFER_SIZE, stdin) == NULL) {
+         return NULL;
+     }
++#endif
+ 
+     /* Remove trailing white space */
+     iter = &rx_buffer[strlen(&rx_buffer[0])-1];
+@@ -322,8 +338,39 @@
+     pending_cmd_buffer[0] = '\0';
+ }
+ 
++#ifdef __wasi__
++/* UCI over WASI: what uci_check_input does for ponderhit and stop; returns whether to stop */
++static bool engine_wasi_heard(struct search_worker *worker, int heard)
++{
++    if (heard&UCI_PONDERHIT) {
++        tc_allocate_time();
++        worker->engine->pondering = false;
++    }
++    if (heard&UCI_STOP) {
++        worker->engine->pondering = false;
++        return true;
++    }
++    return false;
++}
++#endif
++
+ bool engine_check_input(struct search_worker *worker)
+ {
++#ifdef __wasi__
++    /*
++     * UCI over WASI: the helper answers isready and queues every other line.
++     * Only a stop ends pondering, go infinite with no depth, or a go with no
++     * limit (no clock, movetime, depth or nodes). Bench and go infinite
++     * depth N end by their depth.
++     */
++    if (engine_protocol == PROTOCOL_UCI) {
++        int flags = tc_get_flags();
++        return engine_wasi_heard(worker, uci_poll(worker->engine->pondering ||
++                    ((worker->engine->sd >= MAX_SEARCH_DEPTH) &&
++                     (((flags&TC_INFINITE_TIME) != 0) ||
++                      ((flags&(TC_TIME_LIMIT|TC_DEPTH_LIMIT|TC_NODE_LIMIT)) == 0)))));
++    }
++#endif
+     if (!poll_input()) {
+         return false;
+     }
+@@ -340,7 +387,12 @@
+ bool engine_wait_for_input(struct search_worker *worker)
+ {
+     if (engine_protocol == PROTOCOL_UCI) {
++#ifdef __wasi__
++        /* UCI over WASI: the helper waits for input, as the blocking read did */
++        return engine_wasi_heard(worker, uci_wait());
++#else
+         return uci_check_input(worker);
++#endif
+     } else {
+         return xboard_check_input(worker);
+     }
+--- orig/src/nnue.c
++++ src/src/nnue.c
+@@ -34,10 +34,18 @@
+ #include "data.h"
+ #include "hash.h"
+ 
++#ifdef __wasi__
++/* UCI over WASI: incbin's assembler block has no wasm form, so C23 #embed holds the net */
++static const unsigned char nnue_net_data[] = {
++#embed NETFILE_NAME
++};
++#define nnue_net_size sizeof(nnue_net_data)
++#else
+ #define INCBIN_PREFIX
+ #define INCBIN_STYLE INCBIN_STYLE_SNAKE
+ #include "incbin.h"
+ INCBIN(nnue_net, NETFILE_NAME);
++#endif
+ 
+ /* NNUE quantization parameters */
+ #define OUTPUT_SCALE 16.0f
+--- orig/src/simd.c
++++ src/src/simd.c
+@@ -138,7 +138,12 @@
+     for (k=0;k<noutputs;k++) {
+         output[k] = biases[k];
+         for (l=0;l<niterations;l++) {
++#ifdef __wasi__
++            /* UCI over WASI: the build needs this typo fixed, nterations for ninputs */
++            output[k] += (input[l]*weights[k*ninputs+l]);
++#else
+             output[k] += (input[l]*weights[k*nterations+l]);
++#endif
+         }
+     }
+ #endif
+--- orig/src/thread.c
++++ src/src/thread.c
+@@ -75,6 +75,23 @@
+     WaitForSingleObject(*event, INFINITE);
+ }
+ #else
++#ifdef __wasi__
++/*
++ * UCI over WASI: a WASI build has one thread, so a thread's work runs inline
++ * when it starts, and the join has nothing to wait for. This covers the hash
++ * clear in parallel_memset; Threads is capped at 1, so no search worker starts.
++ */
++void thread_create(thread_t *thread, thread_func_t func, void *data)
++{
++    (void)thread;
++    (void)func(data);
++}
++
++void thread_join(thread_t *thread)
++{
++    (void)thread;
++}
++#else
+ void thread_create(thread_t *thread, thread_func_t func, void *data)
+ {
+     (void)pthread_create(thread, NULL, func, data);
+@@ -84,6 +101,7 @@
+ {
+     (void)pthread_join(*thread, NULL);
+ }
++#endif
+ 
+ void mutex_init(mutex_t *mutex)
+ {

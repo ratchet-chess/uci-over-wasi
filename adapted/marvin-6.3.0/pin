@@ -1,0 +1,8 @@
+# Marvin 6.3.0, by Martin Danielsson
+url=https://github.com/bmdanielsson/marvin-chess
+commit=e87a148d611ddc3fcbcf0c7a0d16d6d0e76a5161
+license=GPL-3.0-or-later
+module=marvin.wasm
+compare=bench
+nodes=126715227
+bench_args=-b
