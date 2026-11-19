@@ -1,0 +1,9 @@
+# Stash 11.0.1, by Morgan Houppin
+url=https://gitlab.com/mhouppin/stash-bot
+commit=62c525c52580b31767cb0f1b47a48ba26f4b589c
+# the LICENSE file is the GPL, version 3; no file has a license notice, so nothing grants a later version
+license=GPL-3.0-only
+module=stash.wasm
+# no bench command; movetime, because a go without a time limit gets the engine's smallest one
+compare=positions
+go="depth 7 movetime 1000000"
