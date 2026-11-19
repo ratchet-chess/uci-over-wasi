@@ -1,0 +1,7 @@
+# Mantissa 3.7.2, by Jeremy Wright
+url=https://github.com/jtheardw/mantissa
+commit=0fbcc2b34e8e54add787c59f223049cc66dbfbbc
+license=GPL-3.0-only
+module=mantissa.wasm
+compare=positions
+go="depth 14"

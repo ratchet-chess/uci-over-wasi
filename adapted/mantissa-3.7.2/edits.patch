@@ -1,0 +1,166 @@
+--- orig/src/main.rs
++++ src/src/main.rs
+@@ -29,6 +29,8 @@
+ mod uci;
+ mod util;
+ mod zobrist;
++#[cfg(target_os = "wasi")] // UCI over WASI: the poll helper, copied in by the build
++mod uci_wasi;
+ 
+ use crate::bitboard::*;
+ use crate::evalutil::*;
+--- orig/src/nnue.rs
++++ src/src/nnue.rs
+@@ -3,6 +3,8 @@
+ use std::io::BufWriter;
+ use std::io::prelude::*;
+ use std::simd::*;
++// UCI over WASI: a current std has simd_max and reduce_sum in this trait; build.sh adds this line to the native build
++use std::simd::prelude::SimdFloat;
+ 
+ use crate::bitboard::Bitboard;
+ use crate::default_nnue::*;
+@@ -640,7 +642,17 @@
+         let relu_zeros = all_zeros();
+         for i in 0..64 {
+             let idx = if self.flip { i ^ 32 } else { i };
++            #[cfg(not(target_arch = "wasm32"))]
+             let relud = self.hidden_activations[idx].simd_max(relu_zeros);
++            // UCI over WASI: simd_max is IEEE maxNum, which wasm's f32x4.max is not, so it
++            // lowers to one scalar compare per lane; a compare and a select stay in v128.
++            // Both give the activation when it is above zero, else zero (a NaN or -0.0 gives
++            // +0.0, as the scalar lowering does), and the sum ignores a zero's sign
++            #[cfg(target_arch = "wasm32")]
++            let relud = {
++                let a = self.hidden_activations[idx];
++                std::simd::cmp::SimdPartialOrd::simd_gt(a, relu_zeros).select(a, relu_zeros)
++            };
+ 
+             total += relud * self.hidden_weights[i];
+         }
+--- orig/src/search.rs
++++ src/src/search.rs
+@@ -19,6 +19,10 @@
+ static mut START_TIME: u128 = 0;
+ static mut SEARCH_LIMITS: SearchLimits = SearchLimits::infinite();
+ static mut LAST_BESTMOVE: Move = Move::null_move();
++// UCI over WASI: the go named no limit, so its search is unbounded at the end of input
++// although Mantissa gives it a 10 s movetime
++#[cfg(target_os = "wasi")]
++pub static mut NO_LIMIT: bool = false;
+ 
+ const LB: i32 = -10000000;
+ const UB: i32 = 10000000;
+@@ -129,6 +133,13 @@
+ }
+ 
+ fn check_time(search_limits: &SearchLimits) {
++    // UCI over WASI: the UCI thread is this thread, so the search reads its input,
++    // before the returns that skip the clock for go infinite and go depth
++    #[cfg(target_os = "wasi")]
++    if crate::uci_wasi::poll(search_limits.infinite || unsafe { NO_LIMIT }) & crate::uci_wasi::STOP != 0 {
++        abort_search();
++        return;
++    }
+     if search_limits.infinite { return; }
+     if search_limits.movetime == 0 && !search_limits.use_variable_time {
+         return;
+@@ -391,7 +402,11 @@
+     if search_limits.infinite {
+         unsafe {
+             while !ABORT {
++                #[cfg(not(target_os = "wasi"))]
+                 std::thread::sleep(time::Duration::from_millis(50));
++                // UCI over WASI: no other thread sets ABORT, so wait for the stop here
++                #[cfg(target_os = "wasi")]
++                if crate::uci_wasi::wait() & crate::uci_wasi::STOP != 0 { abort_search(); }
+             }
+         }
+     }
+--- orig/src/uci.rs
++++ src/src/uci.rs
+@@ -38,6 +38,10 @@
+ 
+     let mut bh_piece = -1;
+ 
++    // UCI over WASI: a go with none of these limits is unbounded (see NO_LIMIT)
++    #[cfg(target_os = "wasi")]
++    unsafe { NO_LIMIT = !params.clone().any(|p| matches!(p, "wtime" | "btime" | "movetime" | "depth" | "nodes" | "mate")); }
++
+     loop {
+         let p = match params.next() {
+             Some(p) => p,
+@@ -109,9 +113,13 @@
+     }
+ 
+     let mut thread_board = board.thread_copy();
++    #[cfg(not(target_os = "wasi"))]
+     thread::spawn(move || {
+         best_move(&mut thread_board, options.num_threads, search_limit, options.bh_mode, bh_piece);
+     });
++    // UCI over WASI: one thread, so the search runs here, on the UCI thread
++    #[cfg(target_os = "wasi")]
++    best_move(&mut thread_board, options.num_threads, search_limit, options.bh_mode, bh_piece);
+ }
+ 
+ fn apply_uci_move(board: &mut Bitboard, move_str: String) {
+@@ -224,7 +232,12 @@
+                         Ok(num) => num,
+                         Err(_) => {println!("ERR: invalid value provided for Hash"); return;}
+                     };
+-                    if hash_size > 65536 || hash_size < 1 {
++                    #[cfg(not(target_os = "wasi"))]
++                    let hash_max = 65536;
++                    // UCI over WASI: a 32-bit address space
++                    #[cfg(target_os = "wasi")]
++                    let hash_max = 1024;
++                    if hash_size > hash_max || hash_size < 1 {
+                         println!("ERR: invalid value provided for Hash");
+                         return;
+                     }
+@@ -239,7 +252,12 @@
+                         Ok(num) => num,
+                         Err(_) => {println!("ERR: invalid value provided for Threads"); return;}
+                     };
+-                    if num_threads > 256 || num_threads < 1 {
++                    #[cfg(not(target_os = "wasi"))]
++                    let threads_max = 256;
++                    // UCI over WASI: one thread
++                    #[cfg(target_os = "wasi")]
++                    let threads_max = 1;
++                    if num_threads > threads_max || num_threads < 1 {
+                         println!("ERR: invalid value provided for Threads");
+                         return;
+                     }
+@@ -276,10 +294,15 @@
+     let mut options = UCIOptions {num_threads: 1, move_overhead: 10, hash: 64, bh_mode: OFF};
+ 
+     loop {
++        #[cfg(not(target_os = "wasi"))]
+         let mut inp: String = String::new();
++        #[cfg(not(target_os = "wasi"))]
+         io::stdin()
+             .read_line(&mut inp)
+             .expect("Failed to read line");
++        // UCI over WASI: the helper owns stdin; its end reads as the empty line it is natively
++        #[cfg(target_os = "wasi")]
++        let inp: String = crate::uci_wasi::getline().unwrap_or_default();
+ 
+         let mut params = inp.trim().split_whitespace();
+         let cmd = match params.next() {
+@@ -291,8 +314,15 @@
+         } else if cmd == "uci" {
+             println!("id name Mantissa v3.7.2");
+             println!("id author jtwright");
++            #[cfg(not(target_os = "wasi"))]
+             println!("option name Hash type spin default 64 min 1 max 65536");
++            #[cfg(not(target_os = "wasi"))]
+             println!("option name Threads type spin default 1 min 1 max 256");
++            // UCI over WASI: a 32-bit address space, and one thread
++            #[cfg(target_os = "wasi")]
++            println!("option name Hash type spin default 64 min 1 max 1024");
++            #[cfg(target_os = "wasi")]
++            println!("option name Threads type spin default 1 min 1 max 1");
+             println!("option name Move Overhead type spin default 10 min 1 max 1000");
+             println!("uciok");
+         } else if cmd == "ucinewgame" {
