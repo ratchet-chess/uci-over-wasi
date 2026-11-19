@@ -1,0 +1,8 @@
+# Stash 15.3, by Morgan Houppin
+url=https://gitlab.com/mhouppin/stash-bot
+commit=7d17ff80eb53b9d4808fd285c7439e641f1c5a3b
+license=GPL-3.0-or-later
+module=stash.wasm
+# the native bench waits a fixed 1 ms for its search thread to start, so its count depends on scheduling
+compare=positions
+go="depth 9 movetime 1000000"
