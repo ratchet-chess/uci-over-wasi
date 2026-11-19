@@ -1,0 +1,5 @@
+node_modules/
+*.log
+/tmp/
+# local settings, such as BENCH
+/tools/local.env

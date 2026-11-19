@@ -39,8 +39,8 @@ return before it. Each file's header has the rules in full.
 5. **Replace each busy-wait with the helper's wait.** A finished `go infinite` or ponder search waits there
    for its `stop`.
 6. **Remove every other thread start, or make it inline:** helper threads, a threaded hash clear, timers.
-7. **Cap the options.** `Threads` has a maximum of 1. `Hash` has a maximum the module can allocate; Ratchet's
-   adapted engines use 1024 MB.
+7. **Cap the options.** `Threads` has a maximum of 1. `Hash` has a maximum the module can allocate; the
+   adapted engines in `adapted/` use 1024 MB.
 8. **Keep the patch small.** Put each edit under the language's guard for the target, with a comment that
    says why.
 

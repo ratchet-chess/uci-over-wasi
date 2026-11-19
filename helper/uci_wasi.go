@@ -30,7 +30,7 @@
 //
 // SPDX-License-Identifier: MIT
 //
-// Copyright (c) 2026 the Ratchet contributors
+// Copyright (c) 2026 the uci-over-wasi contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal

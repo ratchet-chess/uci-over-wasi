@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 the uci-over-wasi contributors. The license's text is in LICENSE.
 /**
  * The host side of UCI over WASI: the WASI preview-1 calls a WASI build imports,
  * answered on the thread that runs the engine. A host delivers input to a running
@@ -16,7 +18,7 @@
  * Input known in full before the engine starts needs neither (Script).
  * Platform-neutral: no node: imports.
  *
- * A module may rely on seven calls (core/wasi.ts imports exactly these). A libc
+ * A module may rely on seven calls (Ratchet's core/wasi.ts imports exactly these). A libc
  * or a Rust std imports more of preview 1 than it calls, so every other import
  * gets a fixed answer (floorStubs), and a module that needs more than those
  * answers does not run here.

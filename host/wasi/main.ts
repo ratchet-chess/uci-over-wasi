@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 the uci-over-wasi contributors. The license's text is in LICENSE.
 /**
  * Runs a WASI build as a UCI engine under Bun or Node: stdin feeds the engine's
  * input ring, and the engine runs on its own thread (thread.ts), so a `stop`
@@ -5,10 +7,10 @@
  * never gets a `stop` or an unbounded `go`.
  *
  *   bun host/wasi/main.ts <build.wasm> [args...]   (or node)
- *   bun host/wasi/main.ts build/wasi/ratchet.wasm bench
+ *   bun host/wasi/main.ts engine.wasm bench
  *
  * The arguments after the build go to the engine as its command line. A Bun
- * executable (tools/package.ts) embeds one build and calls runEngine.
+ * executable (Ratchet's tools/package.ts) embeds one build and calls runEngine.
  */
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";

@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 the uci-over-wasi contributors. The license's text is in LICENSE.
 /**
  * Checks a WASI build against UCI over WASI's rules for input during a search,
  * under host/wasi and the runtime that runs this script.
  *
  *   bun tools/wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]
- *   bun tools/wasi-check.ts build/wasi/ratchet.wasm
  *
  * --profile is the module's profile, default the one it declares (host/wasi
  * profileOf): polls, a module that reads stdin from inside its search, unless
@@ -20,8 +21,8 @@
  * default `bench`.
  *
  * Each check starts a fresh process. It prints one line per check and exits 1
- * if any failed. Another engine's build runs only inside a container
- * (tools/ws.ts); this script starts it wherever the script runs.
+ * if any failed. This script starts the build wherever
+ * the script runs, so run another engine's build inside a container.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFileSync } from "node:fs";

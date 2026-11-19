@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 the uci-over-wasi contributors. The license's text is in LICENSE.
 /**
  * The engine's thread under Bun and Node: runs a WASI build (wasi.ts runWasi),
  * writes its output straight to the process's stdout and stderr, and posts its

@@ -6,12 +6,12 @@ browser, under a JavaScript runtime, and under any other host that follows this 
 The engine speaks UCI on standard input and standard output, as a native engine does. The file is a WASI
 preview-1 command, so it needs no glue code of its own.
 
-This document is Ratchet's reading of how UCI and WASI fit together. No standard exists in the field. Other
+This document began as the Ratchet chess engine's reading of how UCI and WASI fit together. No standard exists in the field. Other
 engines and other hosts may adopt it.
 
 - **Part 1** is for an engine's author: what a module must do, and what it may rely on.
 - **Part 2** is for a host's author: what a host must answer and deliver.
-- **Part 3** describes Ratchet's own hosts. It is a record of one implementation, not a rule.
+- **Part 3** describes the reference host, which is in this repo. It is a record of one implementation, not a rule.
 
 `helper/README.md` is the how-to for adapting an existing engine.
 
@@ -19,7 +19,7 @@ engines and other hosts may adopt it.
 
 | term | meaning |
 |---|---|
-| **module** | the engine as one WebAssembly file that meets Part 1; Ratchet's tree calls it a WASI build |
+| **module** | the engine as one WebAssembly file that meets Part 1; this repo's `AGENTS.md` calls it a WASI build |
 | **host** | the program that runs a module: it answers the module's imports, feeds its input and takes its output |
 | **GUI** | whatever writes the UCI lines, as in UCI: a chess GUI, a match runner, a page, a person at a terminal |
 | **profile** | how an engine takes input during a search: **polls**, **deaf** or **threads** |
@@ -157,7 +157,7 @@ the source. A deaf module needs the section: its host must keep `stop` and an un
 ### UCI options
 
 - **`Threads`** has a maximum of 1, if the engine has the option.
-- **`Hash`** has a maximum the module can allocate. Ratchet's adapted engines cap it at 1024 MB. A table size wraps at
+- **`Hash`** has a maximum the module can allocate. The adapted engines in `adapted/` cap it at 1024 MB. A table size wraps at
   4096 MB in a 32-bit module, and an allocation can fail well below that.
 
 ## Part 2: the host
@@ -218,15 +218,15 @@ that is already running. Three ways are known.
 | suspending the module | `fd_read` and `poll_oneoff` suspend the module, and the host's event loop takes the input. | a runtime with JavaScript Promise Integration |
 | rewriting the module | A tool rewrites the linked module so that the host can unwind and rewind its stack (Asyncify). | a second file per module |
 
-The first two need no change to a module. Ratchet's hosts use them (Part 3). The third is not built.
+The first two need no change to a module. The reference host uses them (Part 3). The third is not built.
 
 A host that suspends the module need not suspend at every poll. It gives its event loop a turn every few
 milliseconds, and answers the other polls at once.
 
 ### A host that cannot deliver
 
-This document gives no rule for a host with none of the three ways. Part 3 describes what Ratchet's
-Worker does there, as one host's choice.
+This document gives no rule for a host with none of the three ways. Part 3 describes what the reference
+host's Worker does there, as one host's choice.
 
 ### A deaf module
 
@@ -260,19 +260,19 @@ A host reads the `uci_over_wasi` section from the module's bytes. It need not co
   input the module's search takes.
 - The section has no version key. A later key is compatible, because its absence means this document.
 
-## Part 3: Ratchet's hosts
+## Part 3: the reference host
 
 ### Under Bun and Node
 
 `host/wasi/main.ts` runs a module as a UCI engine on the command line:
 
 ```sh
-bun host/wasi/main.ts build/wasi/ratchet.wasm          # UCI on standard input and output
-bun host/wasi/main.ts build/wasi/ratchet.wasm bench    # the arguments after the module are its own
+bun host/wasi/main.ts <module.wasm>          # UCI on standard input and output
+bun host/wasi/main.ts <module.wasm> bench    # the arguments after the module are its own
 ```
 
 The module runs on a second thread, and standard input feeds a ring in shared memory (`Ring` in
-`host/wasi/wasi.ts`). `tools/package.ts` builds a Bun executable around one module from the same code.
+`host/wasi/wasi.ts`). Ratchet's `tools/package.ts` builds a Bun executable around one module from the same code.
 
 ### In a browser
 
@@ -280,12 +280,12 @@ The module runs on a second thread, and standard input feeds a ring in shared me
 line. Each message from it is one line of the module's output.
 
 ```js
-const engine = new Worker("ratchet.js");          // loads ratchet.wasm beside it
+const engine = new Worker("engine.js");          // loads engine.wasm beside it
 engine.onmessage = (e) => console.log(e.data);
 engine.postMessage("uci");
 ```
 
-`new Worker("ratchet.js#other.wasm")` loads another module, so one script runs any module. The module's
+`new Worker("engine.js#other.wasm")` loads another module, so one script runs any module. The module's
 standard error goes to the console.
 
 A module that fails to load or compile ends the session. So does a failure while it runs, in the first two ways
@@ -323,8 +323,9 @@ The hash table is not kept, and each move's time includes the module's start.
 
 ### As a native executable
 
-`host/wasi/native.c` is the host of a native build, made from a module through wasm2c. It answers the
-seven calls only, so it runs Ratchet's own modules and not every module that meets this document.
+Ratchet has a third host in its own repo, `host/wasi/native.c`. It is the host of a native build, made from a
+module through wasm2c. It answers the seven calls only, so it runs Ratchet's own modules and not every module
+that meets this document.
 
 ### Checking a module
 
@@ -345,5 +346,5 @@ No check exists yet for a host. A second host is checked by running modules that
 ### What has not been run
 
 - **WebKit.** No module and no Worker has run in a WebKit browser.
-- **A host other than Ratchet's.** The fixed answers were chosen from what C, C++, Rust, Go and
+- **A host other than this one.** The fixed answers were chosen from what C, C++, Rust, Go and
   AssemblyScript modules call. Another language's runtime may call more.

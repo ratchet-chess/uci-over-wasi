@@ -1,6 +1,6 @@
 # The limits of a WebAssembly engine
 
-Ratchet's target is the browser, so each engine it ships is one WebAssembly file. That choice limits what
+The Ratchet chess engine's target is the browser, so each engine it ships is one WebAssembly file. That choice limits what
 an engine can be. This document lists the limits in one place.
 
 - **An engine written for the target** is designed inside the limits.
@@ -31,13 +31,13 @@ flowchart LR
 - **Every host has fixed-width SIMD** (`docs/uci-over-wasi.md` § Form). So a module with SIMD needs no
   second file without it.
 - **Any other feature level is a separate file.** A host that offers two levels checks the runtime first,
-  with `WebAssembly.validate`. `FEATURES` in `web/bench.ts` has such checks.
+  with `WebAssembly.validate`. `FEATURES` in ratchet-bench's `web/bench.ts` has such checks.
 - **The runtime chooses the CPU's instructions when it compiles the module.** One file serves x86 and ARM, so
   no module is built per processor.
-- **A native executable fixes its CPU level when it is compiled.** `NATIVE` in `tools/package.ts` lists
+- **A native executable fixes its CPU level when it is compiled.** `NATIVE` in Ratchet's `tools/package.ts` lists
   them. They are the only builds per processor.
 - **A Bun executable contains Bun's own runtime,** which Bun builds per OS and CPU level. `--bun` in
-  `tools/package.ts` names the target.
+  that tool names the target.
 
 ## CPU features and their WebAssembly forms
 
@@ -45,7 +45,7 @@ flowchart LR
 |---|---|---|
 | 64-bit integers | 64-bit integers | Bitboards need no change. |
 | POPCNT, TZCNT, LZCNT | `popcnt`, `ctz` and `clz`, in WebAssembly's first version | Every runtime has them. |
-| BMI2 PEXT and PDEP | nothing | Sliding attacks use magic multiplication (`core/magics.ts`). |
+| BMI2 PEXT and PDEP | nothing | Sliding attacks use magic multiplication (Ratchet's `core/magics.ts`). |
 | prefetch | nothing | A search cannot prefetch a hash table entry. |
 | large pages, NUMA | nothing | A module has one linear memory. |
 | SSE2 to SSE4.1, NEON | fixed-width SIMD: 128-bit vectors, which every host has | One vector path serves x86 and ARM. |

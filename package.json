@@ -1,0 +1,14 @@
+{
+  "name": "uci-over-wasi",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "scripts": {
+    "typecheck": "bunx --bun tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,13 +1,15 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 the uci-over-wasi contributors. The license's text is in LICENSE.
 /**
  * UCI over WASI in a browser: a Worker with stockfish.js's interface. Each
  * message to it is one UCI line; each message from it is one line of output.
  *
- *   const engine = new Worker("ratchet.js");
+ *   const engine = new Worker("engine.js");
  *   engine.onmessage = (e) => console.log(e.data);
  *   engine.postMessage("uci");
  *
- * It loads the WASI build named like its script (ratchet.js loads ratchet.wasm
- * beside it), or the one its URL's hash names (`new Worker("ratchet.js#other.wasm")`),
+ * It loads the WASI build named like its script (engine.js loads engine.wasm
+ * beside it), or the one its URL's hash names (`new Worker("engine.js#other.wasm")`),
  * so it runs any WASI build that speaks UCI.
  *
  * A `stop` must reach a running search, and the Worker has three ways to deliver
