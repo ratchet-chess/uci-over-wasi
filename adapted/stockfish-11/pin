@@ -1,0 +1,8 @@
+# Stockfish 11, by Tord Romstad, Marco Costalba, Joona Kiiski and Gary Linscott
+url=https://github.com/official-stockfish/Stockfish
+commit=c3483fa9a7d7c0ffa9fcc32b467ca844cfb63790
+dir=src
+license=GPL-3.0-or-later
+module=stockfish.wasm
+compare=bench
+nodes=5156767
