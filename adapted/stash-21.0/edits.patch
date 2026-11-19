@@ -1,0 +1,250 @@
+--- orig/src/include/engine.h
++++ src/src/include/engine.h
+@@ -69,6 +69,9 @@
+ 		searchstack_t *ss);
+ 
+ bool	out_of_time(void);
++#ifdef __wasi__
++void	wasi_wait(void);
++#endif
+ score_t	evaluate(const board_t *board);
+ 
+ #endif
+--- orig/src/sources/engine/engine_go.c
++++ src/src/sources/engine/engine_go.c
+@@ -79,7 +79,11 @@
+ 
+ 		uint64_t	nps = (!time) ? 0 : (nodes * 1000) / time;
+ 
++#ifdef __wasi__ // UCI over WASI: clock_t is long long on wasm32
++		printf("info nodes %lu nps %lu time %lld\n",
++#else
+ 		printf("info nodes %lu nps %lu time %lu\n",
++#endif
+ 			(info_t)nodes, (info_t)nps, time);
+ 
+ 		return ;
+@@ -204,7 +208,11 @@
+ 				for (int i = 0; i < multi_pv; ++i)
+ 				{
+ 					printf("info depth %d seldepth %d multipv %d nodes %lu"
++#ifdef __wasi__ // UCI over WASI: clock_t is long long on wasm32
++						" nps %lu hashfull %d time %lld score %s pv",
++#else
+ 						" nps %lu hashfull %d time %lu score %s pv",
++#endif
+ 						root_moves[i].depth, g_seldepth, i + 1,
+ 						(info_t)chess_nodes, (info_t)chess_nps,
+ 						tt_hashfull(), chess_time,
+@@ -242,7 +250,11 @@
+ 
+ 	if (g_goparams.infinite)
+ 		while (!out_of_time())
++#ifdef __wasi__ // UCI over WASI: no other thread can set the stop, so wait on input
++			wasi_wait();
++#else
+ 			;
++#endif
+ 
+ 	printf("bestmove %s\n", move_to_str(root_moves->move, board->chess960));
+ 	fflush(stdout);
+--- orig/src/sources/engine/engine_thread.c
++++ src/src/sources/engine/engine_thread.c
+@@ -27,7 +27,9 @@
+ 
+ 	while (g_engine_send != DO_ABORT)
+ 	{
++#ifndef __wasi__ // UCI over WASI: uci_go calls this after it sets DO_THINK, so nothing is waited for
+ 		pthread_cond_wait(&g_engine_condvar, &g_engine_mutex);
++#endif
+ 
+ 		if (g_engine_send == DO_THINK)
+ 		{
+@@ -50,6 +52,9 @@
+ 			g_engine_mode = WAITING;
+ 			pthread_cond_broadcast(&g_engine_condvar);
+ 		}
++#ifdef __wasi__ // UCI over WASI: one pass runs one go, then uci_go returns
++		break ;
++#endif
+ 	}
+ 
+ 	pthread_mutex_unlock(&g_engine_mutex);
+--- orig/src/sources/engine/out_of_time.c
++++ src/src/sources/engine/out_of_time.c
+@@ -18,12 +18,36 @@
+ 
+ #include "engine.h"
+ #include "uci.h"
++#ifdef __wasi__
++# include "uci_wasi.h"
++
++extern int	wasi_unbounded;
++
++// UCI over WASI: the search runs on the UCI thread, so it reads the input at its
++// periodic check, and acts on it as uci_stop and uci_quit do.
++static void	wasi_heard(int heard)
++{
++	if (heard & UCI_QUIT)
++		uci_quit(NULL);
++	else if (heard & UCI_STOP)
++		uci_stop(NULL);
++}
++
++void		wasi_wait(void)
++{
++	wasi_heard(uci_wait());
++}
++#endif
+ 
+ bool	out_of_time(void)
+ {
+ 	extern uint64_t		g_nodes;
+ 	extern goparams_t	g_goparams;
+ 
++#ifdef __wasi__ // UCI over WASI: the input is read here; see wasi_heard
++	wasi_heard(uci_poll(wasi_unbounded));
++#endif
++
+ 	pthread_mutex_lock(&g_engine_mutex);
+ 	enum e_egn_send	send = g_engine_send;
+ 	pthread_mutex_unlock(&g_engine_mutex);
+--- orig/src/sources/engine/search_bestmove.c
++++ src/src/sources/engine/search_bestmove.c
+@@ -226,7 +226,11 @@
+ 			uint64_t	nps = (g_nodes * 1000) / elapsed;
+ 
+ 			printf("info depth %d nodes %lu nps %lu"
++#ifdef __wasi__ // UCI over WASI: clock_t is long long on wasm32
++				" time %lld currmove %s currmovenumber %d\n",
++#else
+ 				" time %lu currmove %s currmovenumber %d\n",
++#endif
+ 				depth + 1, (info_t)g_nodes, (info_t)nps, elapsed,
+ 				move_to_str(i->move, board->chess960),
+ 				(int)(i - begin) + pv_line + 1);
+--- orig/src/sources/main/main.c
++++ src/src/sources/main/main.c
+@@ -29,6 +29,7 @@
+ 	zobrist_init();
+ 	tt_resize(16);
+ 
++#ifndef __wasi__ // UCI over WASI: one thread; uci_go runs each search on this one
+ 	pthread_t	engine_pt;
+ 
+ 	if (pthread_create(&engine_pt, NULL, &engine_thread, NULL))
+@@ -36,6 +37,7 @@
+ 		perror("Failed to boot engine thread");
+ 		return (1);
+ 	}
++#endif
+ 	uci_loop(argc, argv);
+ 
+ 	return (0);
+--- orig/src/sources/uci/uci_bench.c
++++ src/src/sources/uci/uci_bench.c
+@@ -81,7 +81,11 @@
+ 	bench_time = chess_clock() - bench_time;
+ 
+ 	printf("Benchmark report:\n");
++#ifdef __wasi__ // UCI over WASI: clock_t is long long on wasm32
++	printf("TIME:  %lld milliseconds\n", bench_time);
++#else
+ 	printf("TIME:  %lu milliseconds\n", bench_time);
++#endif
+ 	printf("NODES: %lu\n", (info_t)total_nodes);
+ 	printf("NPS:   %lu\n", (info_t)((total_nodes * 1000) / bench_time));
+ 	fflush(stdout);
+--- orig/src/sources/uci/uci.c
++++ src/src/sources/uci/uci.c
+@@ -21,6 +21,22 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
++#ifdef __wasi__
++# include "uci_wasi.h"
++
++// UCI over WASI: the helper owns stdin. The line is copied, since the loop cuts
++// it up and a poll during the search reuses the helper's buffer, and it gets back
++// the line end that fgets keeps, which the option parser looks for.
++static char	*wasi_fgets(char *line, size_t size)
++{
++	const char	*input = uci_getline();
++
++	if (!input)
++		return (NULL);
++	snprintf(line, size, "%s\n", input);
++	return (line);
++}
++#endif
+ 
+ const cmdlink_t	commands[] =
+ {
+@@ -79,7 +95,11 @@
+ 	{
+ 		char	*line = malloc(8192);
+ 
++#ifdef __wasi__ // UCI over WASI: the helper owns stdin, so stdio never reads it
++		while (wasi_fgets(line, 8192) != NULL)
++#else
+ 		while (fgets(line, 8192, stdin) != NULL)
++#endif
+ 			if (execute_uci_cmd(line) == 0)
+ 				break ;
+ 
+--- orig/src/sources/uci/uci_go.c
++++ src/src/sources/uci/uci_go.c
+@@ -23,6 +23,13 @@
+ #include "info.h"
+ #include "movelist.h"
+ #include "uci.h"
++#ifdef __wasi__
++# include "init.h"
++
++// UCI over WASI: whether only a stop ends this go: it is infinite, or it has no
++// limit at all. It is read in uci_go, before engine_go fills in its default depth and nodes.
++int	wasi_unbounded;
++#endif
+ 
+ void	uci_go(const char *args)
+ {
+@@ -126,5 +133,11 @@
+ 	pthread_cond_broadcast(&g_engine_condvar);
+ 	pthread_mutex_unlock(&g_engine_mutex);
+ 
++#ifdef __wasi__ // UCI over WASI: the search runs on the UCI thread, before uci_go returns
++	wasi_unbounded = g_goparams.infinite || !(g_goparams.wtime || g_goparams.btime
++		|| g_goparams.winc || g_goparams.binc || g_goparams.movetime
++		|| g_goparams.depth || g_goparams.nodes || g_goparams.mate);
++	engine_thread(NULL);
++#endif
+ 	free(copy);
+ }
+--- orig/src/sources/uci/uci_setoption.c
++++ src/src/sources/uci/uci_setoption.c
+@@ -46,7 +46,11 @@
+ 		if (token)
+ 		{
+ 			size_t	value = (size_t)atol(token);
++#ifdef __wasi__ // UCI over WASI: a 32-bit address space
++			if (value >= 1 && value <= 1024)
++#else
+ 			if (value >= 1 && value <= 131072ul)
++#endif
+ 				tt_resize(value);
+ 		}
+ 	}
+--- orig/src/sources/uci/uci_uci.c
++++ src/src/sources/uci/uci_uci.c
+@@ -24,7 +24,11 @@
+ 	(void)args;
+ 	puts("id name Stash v21.0");
+ 	puts("id author Morgan Houppin (@mhouppin)");
++#ifdef __wasi__ // UCI over WASI: a 32-bit address space
++	puts("option name Hash type spin default 16 min 1 max 1024");
++#else
+ 	puts("option name Hash type spin default 16 min 1 max 131072");
++#endif
+ 	puts("option name Clear Hash type button");
+ 	puts("option name MultiPV type spin default 1 min 1 max 16");
+ 	puts("option name Minimum Thinking Time type spin default 20 min 0 max 30000");
