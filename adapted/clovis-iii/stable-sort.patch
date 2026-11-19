@@ -1,0 +1,20 @@
+--- orig/src/movepicker.cpp
++++ src/src/movepicker.cpp
+@@ -24,7 +24,7 @@
+ 				curr = end_bad_caps = moves;
+ 				last = MoveGen::generate<ScoredMove, CAPTURE_MOVES>(pos, moves);
+ 				score_captures();
+-				sort(moves, last, sm_score_comp);
++				stable_sort(moves, last, sm_score_comp);
+ 				++stage;
+ 				[[fallthrough]];
+ 			case WINNING_CAPTURES:
+@@ -48,7 +48,7 @@
+ 					curr = end_bad_caps;
+ 					last = MoveGen::generate<ScoredMove, QUIET_MOVES>(pos, curr);
+ 					score_quiets();
+-					sort(end_bad_caps, last, sm_score_comp);
++					stable_sort(end_bad_caps, last, sm_score_comp);
+ 				}
+ 				++stage;
+ 				[[fallthrough]];

@@ -1,0 +1,37 @@
+--- orig/src/bitboard.h
++++ src/src/bitboard.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
++#ifndef __wasi__ // UCI over WASI: wasm32 has no x86 intrinsics header, and the build uses none
+ #include <immintrin.h>
++#endif
+ #include <cstring>
+ #include <cassert>
+ #include <iostream>
+--- orig/src/uci.cpp
++++ src/src/uci.cpp
+@@ -29,7 +29,11 @@
+ 				if (token == "quit" || token == "stop")	break;
+ 				else if (token == "uci")
+ 					cout << "id name " << version_no << endl
++#ifdef __wasi__ // UCI over WASI: a 32-bit address space
++					<< "option name Hash type spin default 16 min 1 max 1024" << endl
++#else
+ 					<< "option name Hash type spin default 16 min 1 max 10000" << endl
++#endif
+ 					<< "option name Threads type spin default 1 min 1 max 1" << endl
+ 					<< "id author " << authors << endl
+ 					<< "uciok" << endl;
+@@ -59,7 +63,11 @@
+ 			{
+ 				int mb = stoi(value);
+ 				mb = max(mb, 1);
++#ifdef __wasi__ // UCI over WASI: a 32-bit address space
++				mb = min(mb, 1024);
++#else
+ 				mb = min(mb, 10000);
++#endif
+ 				tt.resize(mb);
+ 			}
+ 

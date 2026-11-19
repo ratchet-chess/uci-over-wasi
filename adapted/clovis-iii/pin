@@ -1,0 +1,10 @@
+# Clovis III, by Jonathan McDermid
+url=https://github.com/jonathanmcdermid/Clovis
+commit=65cd44c79ee1426de45d53fa12622b3707fac3d3
+license=MIT
+module=clovis.wasm
+# std::sort orders moves of equal score differently under libstdc++ and libc++, so the module's search differs
+# from the native build's. With std::stable_sort in both, the two must agree.
+compare=positions
+gate=stable-sort.patch
+go="depth 12"
