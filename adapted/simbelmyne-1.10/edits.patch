@@ -1,0 +1,157 @@
+--- orig/simbelmyne/src/cli/perft.rs
++++ src/simbelmyne/src/cli/perft.rs
+@@ -97,7 +97,7 @@
+     for depth in 0..=depth {
+         let result = perform_perft::<BULK>(board, depth);
+         let is_match = match preset.expected.get(depth) {
+-            Some(&expected) => result.nodes == expected,
++            Some(&expected) => result.nodes as u64 == expected, // UCI over WASI: usize is 32 bits
+             None => true,
+         };
+ 
+--- orig/simbelmyne/src/cli/presets.rs
++++ src/simbelmyne/src/cli/presets.rs
+@@ -14,7 +14,7 @@
+     pub name: &'a str,
+     pub description: &'a str,
+     pub fen: &'a str,
+-    pub expected: &'a [usize],
++    pub expected: &'a [u64], // UCI over WASI: the counts pass 32 bits
+ }
+ 
+ impl Preset {
+--- orig/simbelmyne/src/main.rs
++++ src/simbelmyne/src/main.rs
+@@ -14,6 +14,8 @@
+ mod tests;
+ mod history_tables;
+ mod spsa;
++#[cfg(target_os = "wasi")] // UCI over WASI: the poll helper, copied in by the build
++mod uci_wasi;
+ 
+ #[derive(Parser)]
+ #[command(author = "Sam Roelants", version = "0.1", about = "A simple perft tool.", long_about = None)]
+--- orig/simbelmyne/src/search/params.rs
++++ src/simbelmyne/src/search/params.rs
+@@ -253,9 +253,10 @@
+ pub const MAX_DEPTH: usize = 128;
+ pub const MAX_KILLERS: usize = 2;
+ 
+-const LMR_TABLE: [[usize; 64]; 64] = unsafe { transmute(*include_bytes!("../../../bins/lmr.bin")) };
++// UCI over WASI: lmr.bin holds 64-bit entries, and usize is 32 bits
++const LMR_TABLE: [[u64; 64]; 64] = unsafe { transmute(*include_bytes!("../../../bins/lmr.bin")) };
+ 
+ pub fn lmr_reduction(depth: usize, move_count: usize) -> usize {
+-    LMR_TABLE[depth.min(63)][move_count.min(63)]
++    LMR_TABLE[depth.min(63)][move_count.min(63)] as usize
+ }
+ 
+--- orig/simbelmyne/src/time_control.rs
++++ src/simbelmyne/src/time_control.rs
+@@ -160,6 +160,12 @@
+         // Set the next checkup point
+         self.next_checkup = nodes + CHECKUP_WINDOW;
+ 
++        // UCI over WASI: the UCI thread is this thread, so the search reads its input
++        #[cfg(target_os = "wasi")]
++        if crate::uci_wasi::poll(self.tc == TimeControl::Infinite) & crate::uci_wasi::STOP != 0 {
++            self.stop.store(true, Ordering::SeqCst);
++        }
++
+         // Always respect the global stop flag
+         if self.stopped() {
+             return false;
+--- orig/simbelmyne/src/uci.rs
++++ src/simbelmyne/src/uci.rs
+@@ -89,7 +89,11 @@
+     /// Start listening on stdin and transmit any valid UCI messages to the
+     /// search thread
+     pub fn run(&mut self) -> anyhow::Result<()> {
+-        let stdin = std::io::stdin().lock();
++        // UCI over WASI: the helper owns stdin, so std's reader never reads it
++        #[cfg(not(target_os = "wasi"))]
++        let lines = std::io::stdin().lock().lines();
++        #[cfg(target_os = "wasi")]
++        let lines = std::iter::from_fn(|| crate::uci_wasi::getline().map(std::io::Result::Ok));
+ 
+         eprintln!("{}", BANNER.blue());
+         eprintln!("                            {} {}", "Version".blue(), VERSION.blue());
+@@ -101,7 +105,7 @@
+         eprintln!("");
+ 
+ 
+-        for input in stdin.lines() {
++        for input in lines {
+             let input = input.unwrap();
+ 
+             match input.trim().parse::<UciClientMessage>() {
+@@ -228,6 +232,7 @@
+ }
+ 
+ /// Commands that can be sent from the UCI listener thread to the SearchThread
++#[cfg(not(target_os = "wasi"))]
+ enum SearchCommand {
+     Search(Position, TimeController),
+     Clear,
+@@ -236,10 +241,12 @@
+ 
+ /// A handle to a long-running thread that's in charge of searching for the best
+ /// move, given a position and time control.
++#[cfg(not(target_os = "wasi"))]
+ struct SearchThread {
+     tx: std::sync::mpsc::Sender<SearchCommand>
+ }
+ 
++#[cfg(not(target_os = "wasi"))]
+ impl SearchThread {
+     /// Spawn a new search thread, and return a handle to it as a SearchThread
+     /// struct.
+@@ -302,3 +309,48 @@
+     //     self.tx.send(SearchCommand::SetSearchParams(search_params)).unwrap();
+     // }
+ }
++
++/// UCI over WASI: one thread. The search thread's state and its three commands,
++/// run on the calling thread, the UCI thread.
++#[cfg(target_os = "wasi")]
++struct SearchThread {
++    tt_size: usize,
++    tt: TTable,
++    pawn_cache: PawnCache,
++    history: History,
++}
++
++#[cfg(target_os = "wasi")]
++impl SearchThread {
++    pub fn new() -> Self {
++        Self {
++            tt_size: DEFAULT_TT_SIZE,
++            tt: TTable::with_capacity(DEFAULT_TT_SIZE),
++            pawn_cache: PawnCache::with_capacity(8),
++            history: History::new(),
++        }
++    }
++
++    pub fn search(&mut self, position: Position, mut tc: TimeController) {
++        self.tt.increment_age();
++
++        let report = position.search::<DEBUG>(
++            &mut self.tt,
++            &mut self.pawn_cache,
++            &mut self.history,
++            &mut tc,
++        );
++
++        println!("{}", UciEngineMessage::BestMove(report.pv[0]));
++    }
++
++    pub fn clear_tables(&mut self) {
++        self.history = History::new();
++        self.tt = TTable::with_capacity(self.tt_size);
++    }
++
++    pub fn resize_tt(&mut self, size: usize) {
++        self.tt_size = size;
++        self.tt = TTable::with_capacity(size);
++    }
++}

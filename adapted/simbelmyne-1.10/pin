@@ -1,0 +1,7 @@
+# Simbelmyne 1.10, by Sam Roelants
+url=https://github.com/sroelants/simbelmyne
+commit=025efdbac0181f803725a84b5a6b37ca20590240
+license=GPL-3.0-only
+module=simbelmyne.wasm
+compare=bench
+nodes=6518362
