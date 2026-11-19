@@ -1,0 +1,190 @@
+--- orig/engine/time_control.go
++++ src/engine/time_control.go
+@@ -201,6 +201,8 @@
+ // Stopped returns true if the search has stopped because
+ // Stop() was called or the time has ran out.
+ func (tc *TimeControl) Stopped() bool {
++	// UCI over WASI: on wasip1 the search's periodic check reads the input that waits (uci_wasi_wasip1.go)
++	tc.poll()
+ 	if !tc.hasStopped(tc.stopDeadline) {
+ 		return false
+ 	}
+--- /dev/null
++++ src/engine/uci_wasi_other.go
+@@ -0,0 +1,7 @@
++//go:build !wasip1
++
++// UCI over WASI: the native form of the call uci_wasi_wasip1.go makes on wasip1.
++
++package engine
++
++func (tc *TimeControl) poll() {}
+--- /dev/null
++++ src/engine/uci_wasi_wasip1.go
+@@ -0,0 +1,17 @@
++// UCI over WASI: the search's side of the poll helper. The UCI loop sets
++// PollInput (zurichess/uci_wasi_wasip1.go), and the search's periodic check
++// (Stopped, every checkpointStep nodes) calls it.
++
++package engine
++
++// PollInput reads the input that waits and acts on it; unbounded is whether only a stop ends the search. Nil outside a UCI loop.
++var PollInput func(unbounded bool)
++
++// poll calls PollInput. Only a stop ends a search that still ponders, or one
++// with no time for the side to move and no depth limit short of Play's last
++// depth (go infinite); this patch's reading of TimeControl.
++func (tc *TimeControl) poll() {
++	if PollInput != nil {
++		PollInput(!tc.ponderhit.get() || tc.time >= infinite && tc.Depth >= 63)
++	}
++}
+--- orig/zurichess/main.go
++++ src/zurichess/main.go
+@@ -60,7 +60,8 @@
+ 	log.SetFlags(log.Lshortfile)
+ 
+ 	uci := NewUCI()
+-	scan := bufio.NewScanner(os.Stdin)
++	// UCI over WASI: stdin is the helper's line source on wasip1 (uci_wasi_wasip1.go)
++	scan := bufio.NewScanner(stdin)
+ 	for scan.Scan() {
+ 		line := scan.Text()
+ 		if err := uci.Execute(line); err != nil {
+--- orig/zurichess/uci.go
++++ src/zurichess/uci.go
+@@ -173,7 +173,8 @@
+ 	fmt.Printf("id name zurichess %v\n", buildVersion)
+ 	fmt.Printf("id author Alexandru Moșoi\n")
+ 	fmt.Printf("\n")
+-	fmt.Printf("option name Hash type spin default %v min 1 max 65536\n", DefaultHashTableSizeMB)
++	// UCI over WASI: Hash's maximum is 1024 MB on wasip1, a 32-bit address space (uci_wasi_wasip1.go)
++	fmt.Printf("option name Hash type spin default %v min 1 max %v\n", DefaultHashTableSizeMB, maxHashMB)
+ 	fmt.Printf("option name MultiPV type spin default %d min 1 max %d\n", uci.Engine.Options.MultiPV, maxMultiPV)
+ 	fmt.Printf("option name Ponder type check default true\n")
+ 	fmt.Printf("option name Handicap Level type spin default %d min 0 max %d\n", uci.Engine.Options.HandicapLevel, maxHandicapLevel)
+@@ -293,7 +294,8 @@
+ 
+ 	uci.timeControl.Start(ponder)
+ 	uci.idle <- struct{}{}
+-	go uci.play()
++	// UCI over WASI: on wasip1 the search runs on the UCI loop's goroutine (uci_wasi_wasip1.go)
++	uci.start()
+ 	return nil
+ }
+ 
+@@ -336,6 +338,8 @@
+ 	}
+ 
+ 	// If pondering was requested it will block because the channel is full.
++	// UCI over WASI: on wasip1 nothing else can empty the channel, so wait on input (uci_wasi_wasip1.go)
++	uci.waitPonder()
+ 	uci.ponder <- struct{}{}
+ 	<-uci.ponder
+ 
+@@ -389,6 +393,8 @@
+ 		if hashSizeMB, err := strconv.ParseInt(option[3], 10, 64); err != nil {
+ 			return err
+ 		} else {
++			// UCI over WASI: on wasip1 the old table is freed first, or each change grows memory toward 4 GB (uci_wasi_wasip1.go)
++			freeHash()
+ 			GlobalHashTable = NewHashTable(int(hashSizeMB))
+ 		}
+ 		return nil
+--- /dev/null
++++ src/zurichess/uci_wasi_other.go
+@@ -0,0 +1,17 @@
++//go:build !wasip1
++
++// UCI over WASI: the native forms of the calls uci_wasi_wasip1.go makes on wasip1.
++
++package main
++
++import "os"
++
++const maxHashMB = 65536
++
++var stdin = os.Stdin
++
++func (uci *UCI) start() { go uci.play() }
++
++func (uci *UCI) waitPonder() {}
++
++func freeHash() {}
+--- /dev/null
++++ src/zurichess/uci_wasi_wasip1.go
+@@ -0,0 +1,74 @@
++// UCI over WASI: the UCI loop's side of the poll helper (internal/uciwasi). A
++// wasip1 build has one thread and no preemption, so the search runs on the UCI
++// loop's goroutine, and what a poll hears does what Execute does for the same
++// command, without the channel waits that would block the only goroutine.
++
++package main
++
++import (
++	"io"
++	"runtime"
++
++	"bitbucket.org/zurichess/zurichess/engine"
++	"bitbucket.org/zurichess/zurichess/internal/uciwasi"
++)
++
++// maxHashMB is Hash's maximum: a 32-bit address space.
++const maxHashMB = 1024
++
++// stdin gives the helper's lines to the UCI loop's scanner.
++var stdin io.Reader = &lineReader{}
++
++type lineReader struct{ pending []byte }
++
++func (r *lineReader) Read(p []byte) (int, error) {
++	if len(r.pending) == 0 {
++		line, ok := uciwasi.Getline()
++		if !ok {
++			return 0, io.EOF
++		}
++		r.pending = append(append(r.pending, line...), '\n')
++	}
++	n := copy(p, r.pending)
++	r.pending = r.pending[:copy(r.pending, r.pending[n:])]
++	return n, nil
++}
++
++// start runs the search where go_ started its goroutine.
++func (uci *UCI) start() {
++	engine.PollInput = func(unbounded bool) { uci.heard(uciwasi.Poll(unbounded)) }
++	uci.play()
++}
++
++// heard does what ponderhit and stop do: ponderhit ends pondering, and stop ends the search and pondering.
++func (uci *UCI) heard(bits int) {
++	if bits&uciwasi.Ponderhit != 0 {
++		uci.timeControl.PonderHit()
++		select {
++		case <-uci.ponder:
++		default:
++		}
++	}
++	if bits&uciwasi.Stop != 0 {
++		uci.timeControl.Stop()
++		select {
++		case <-uci.ponder:
++		default:
++		}
++	}
++}
++
++// waitPonder waits on input while a finished ponder search still ponders.
++func (uci *UCI) waitPonder() {
++	for len(uci.ponder) == cap(uci.ponder) {
++		uci.heard(uciwasi.Wait())
++	}
++}
++
++// freeHash frees the hash table before a new one is made. A wasm memory never
++// shrinks, and Go's next collection comes only after the new table is made, so
++// each Hash change would otherwise grow memory by the new table's size.
++func freeHash() {
++	engine.GlobalHashTable = nil
++	runtime.GC()
++}

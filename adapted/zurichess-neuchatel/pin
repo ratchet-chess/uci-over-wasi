@@ -1,0 +1,7 @@
+# Zurichess neuchatel, by Alexandru Moșoi
+url=https://bitbucket.org/zurichess/zurichess
+commit=f5f1b02de17478f3166c06d138d95178ea0c7941
+license=BSD-3-Clause
+module=zurichess.wasm
+compare=positions
+go="depth 12"
