@@ -1,0 +1,184 @@
+--- orig/search.cpp
++++ src/search.cpp
+@@ -231,7 +231,11 @@
+   Threads.stopOnPonderhit = true;
+ 
+   while (!Threads.stop && (Threads.ponder || Limits.infinite))
++#ifdef __wasi__ // UCI over WASI: no other thread can set the stop, so wait on input
++      UCI::wait();
++#else
+   {} // Busy wait for a stop or a ponder reset
++#endif
+ 
+   // Stop the threads if not already stopped (also raise the stop if
+   // "ponderhit" just reset Threads.ponder).
+@@ -1568,6 +1572,10 @@
+   // When using nodes, ensure checking rate is not lower than 0.1% of nodes
+   callsCnt = Limits.nodes ? std::min(1024, int(Limits.nodes / 1024)) : 1024;
+ 
++#ifdef __wasi__ // UCI over WASI: the UCI thread is this thread, so the search reads its input
++  UCI::poll();
++#endif
++
+   static TimePoint lastInfoTime = now();
+ 
+   TimePoint elapsed = Time.elapsed();
+--- orig/syzygy/tbprobe.cpp
++++ src/syzygy/tbprobe.cpp
+@@ -216,7 +216,9 @@
+         fstat(fd, &statbuf);
+         *mapping = statbuf.st_size;
+         *baseAddress = mmap(nullptr, statbuf.st_size, PROT_READ, MAP_SHARED, fd, 0);
++#ifndef __wasi__ // UCI over WASI: no madvise
+         madvise(*baseAddress, statbuf.st_size, MADV_RANDOM);
++#endif
+         ::close(fd);
+ 
+         if (*baseAddress == MAP_FAILED) {
+--- orig/thread.cpp
++++ src/thread.cpp
+@@ -34,10 +34,14 @@
+ /// Thread constructor launches the thread and waits until it goes to sleep
+ /// in idle_loop(). Note that 'searching' and 'exit' should be alredy set.
+ 
++#ifdef __wasi__ // UCI over WASI: one thread
++Thread::Thread(size_t n) : idx(n) { searching = false; }
++#else
+ Thread::Thread(size_t n) : idx(n), stdThread(&Thread::idle_loop, this) {
+ 
+   wait_for_search_finished();
+ }
++#endif
+ 
+ 
+ /// Thread destructor wakes up the thread in idle_loop() and waits
+@@ -46,6 +50,9 @@
+ Thread::~Thread() {
+ 
+   assert(!searching);
++#ifdef __wasi__ // UCI over WASI: one thread
++  return;
++#endif
+ 
+   exit = true;
+   start_searching();
+@@ -71,6 +78,12 @@
+ /// Thread::start_searching() wakes up the thread that will start the search
+ 
+ void Thread::start_searching() {
++#ifdef __wasi__ // UCI over WASI: one thread
++  searching = true;
++  search();
++  searching = false;
++  return;
++#endif
+ 
+   std::lock_guard<Mutex> lk(mutex);
+   searching = true;
+--- orig/tt.cpp
++++ src/tt.cpp
+@@ -79,6 +79,10 @@
+ //  in a multi-threaded way.
+ 
+ void TranspositionTable::clear() {
++#ifdef __wasi__ // UCI over WASI: one thread
++  std::memset(table, 0, clusterCount * sizeof(Cluster));
++  return;
++#endif
+ 
+   std::vector<std::thread> threads;
+ 
+--- orig/uci.cpp
++++ src/uci.cpp
+@@ -32,6 +32,9 @@
+ #include "tt.h"
+ #include "uci.h"
+ #include "syzygy/tbprobe.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ using namespace std;
+ 
+@@ -177,9 +180,28 @@
+          << "\nNodes/second    : " << 1000 * nodes / elapsed << endl;
+   }
+ 
++#ifdef __wasi__ // UCI over WASI: what UCI::loop does for the same commands
++  void heard(int h) {
++
++    if ((h & UCI_STOP) || ((h & UCI_PONDERHIT) && Threads.stopOnPonderhit))
++        Threads.stop = true;
++    else if (h & UCI_PONDERHIT)
++        Threads.ponder = false;
++  }
++#endif
++
+ } // namespace
+ 
+ 
++#ifdef __wasi__
++/// UCI::poll() handles the input that waits now; MainThread::check_time() calls it.
++/// UCI::wait() waits for input where the search waited for another thread's stop.
++
++void UCI::poll() { heard(uci_poll(Search::Limits.infinite || Threads.ponder)); }
++void UCI::wait() { heard(uci_wait()); }
++#endif
++
++
+ /// UCI::loop() waits for a command from stdin, parses it and calls the appropriate
+ /// function. Also intercepts EOF from stdin to ensure gracefully exiting if the
+ /// GUI dies unexpectedly. When called with some command line arguments, e.g. to
+@@ -199,8 +221,16 @@
+       cmd += std::string(argv[i]) + " ";
+ 
+   do {
++#ifdef __wasi__ // UCI over WASI: the helper owns stdin, so cin is never read
++      if (argc == 1)
++      {
++          const char* line = uci_getline();
++          cmd = line ? line : "quit";
++      }
++#else
+       if (argc == 1 && !getline(cin, cmd)) // Block here waiting for input or EOF
+           cmd = "quit";
++#endif
+ 
+       istringstream is(cmd);
+ 
+--- orig/uci.h
++++ src/uci.h
+@@ -69,6 +69,10 @@
+ 
+ void init(OptionsMap&);
+ void loop(int argc, char* argv[]);
++#ifdef __wasi__ // UCI over WASI: the search runs on the UCI thread and hears input through these
++void poll();
++void wait();
++#endif
+ std::string value(Value v);
+ std::string square(Square s);
+ std::string move(Move m, bool chess960);
+--- orig/ucioption.cpp
++++ src/ucioption.cpp
+@@ -56,12 +56,20 @@
+ void init(OptionsMap& o) {
+ 
+   // at most 2^32 clusters.
++#ifdef __wasi__ // UCI over WASI
++  constexpr int MaxHashMB = 1024; // a 32-bit address space
++#else
+   constexpr int MaxHashMB = Is64Bit ? 131072 : 2048;
++#endif
+ 
+   o["Debug Log File"]        << Option("", on_logger);
+   o["Contempt"]              << Option(24, -100, 100);
+   o["Analysis Contempt"]     << Option("Both var Off var White var Black var Both", "Both");
++#ifdef __wasi__ // UCI over WASI: one thread
++  o["Threads"]               << Option(1, 1, 1, on_threads);
++#else
+   o["Threads"]               << Option(1, 1, 512, on_threads);
++#endif
+   o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);
+   o["Clear Hash"]            << Option(on_clear_hash);
+   o["Ponder"]                << Option(false);

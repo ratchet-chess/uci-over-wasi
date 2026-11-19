@@ -1,0 +1,8 @@
+# Stockfish 10, by Tord Romstad, Marco Costalba, Joona Kiiski and Gary Linscott
+url=https://github.com/official-stockfish/Stockfish
+commit=b4c239b625285307c5871f1104dc3fb80aa6d5d2
+dir=src
+license=GPL-3.0-or-later
+module=stockfish.wasm
+compare=bench
+nodes=3939338
