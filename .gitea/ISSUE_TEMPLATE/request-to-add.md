@@ -2,8 +2,6 @@
 name: Request to add an adapted engine
 about: Offer an adapted engine for adapted/
 title: "Add: <engine> <version>"
-labels:
-  - adapted-engine
 ---
 
 <!-- Open a pull request with one folder, adapted/<engine>-<version>/, and link it here. tools/adapted.sh states the folder's form. -->

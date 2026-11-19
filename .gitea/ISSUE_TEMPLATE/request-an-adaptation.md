@@ -2,8 +2,6 @@
 name: Request an adaptation
 about: Ask for an engine to be adapted to UCI over WASI
 title: "Adapt: <engine> <version>"
-labels:
-  - adaptation
 ---
 
 <!-- An adapted engine is another engine with the edits that make it a module of UCI over WASI. -->
