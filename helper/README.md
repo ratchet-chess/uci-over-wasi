@@ -69,6 +69,17 @@ return before it. Each file's header has the rules in full.
 - **A net on x86 intrinsics.** wasi-sdk refuses `immintrin.h`, so the engine builds on its scalar path.
   For a faster net, write a path on `wasm_simd128.h`. Portable vector source, such as Rust's `std::simd`,
   compiles to 128-bit steps as written.
+- **A net's 128-bit path needs the 128-bit weight layout.** An engine that permutes its weights for AVX2 keeps a
+  separate layout for 128-bit vectors. Load that one.
+- **A net compiled in has no alignment of its own.** incbin aligned it; `#embed` into a byte array does not.
+  Copy the net to aligned memory, or align the array, where the engine's loader checks alignment.
+- **A float layer that uses fused multiply-add stays scalar.** WebAssembly has no fused 128-bit multiply-add
+  outside relaxed SIMD, whose `relaxed_madd` is not exact. Keep `fmaf` or `std::fma` on the scalar path, or the
+  module's node counts differ from the native build's.
+- **Check that the SIMD reached the net's hot functions,** one function at a time. A whole-module count of
+  SIMD instructions misses a kernel or a float layer left scalar.
+- **In a 128-bit kernel, combine lanes with shuffles,** not `extract_lane`. Test a lane for nonzero with `ne`,
+  not a signed `gt`, which is wrong for negative lanes.
 - **Relaxed SIMD** (`-mrelaxed-simd`) is allowed only in its exact form (`docs/uci-over-wasi.md` § Form). The
   module then declares `requires=relaxed-simd`, and its node signature must be equal on x86 and on ARM.
 - **Sizes have 32 bits.** `size_t`, `long` and Rust's `usize` are 32-bit types in a module. Where a value
@@ -121,8 +132,11 @@ declares the deaf profile, `profile=deaf`, so its host keeps `stop` and an unbou
 
 - **`bun tools/wasi-check.ts <module.wasm>`** checks the module's handling of input during a search.
   `--bench <nodes>` also runs the engine's bench from the command line and looks for that node count.
-- **The adapted engine's node counts equal the native build's.** Compare the engine's bench, or moves and node
-  counts over a position file. A difference is a bug in the edits.
+- **The adapted engine's node counts equal the native build's.** A difference is a bug in the edits.
+- **Compare the engine's full bench where it has one and the check's time allows it.** A position file comes
+  second: a fixed-depth suite can match native while the full bench differs, as a float layer left unfused does.
+  An engine without a usable bench, or with one too long for the check, compares moves and node counts over a
+  position file.
 - **An engine whose play depends on its standard library** is the exception. `std::sort` orders equal
   scores differently under libstdc++ and libc++, so such a module differs from its native build. Its gate
   is a throwaway pair: the native and the wasm build agree once `std::stable_sort` is patched into both.

@@ -205,10 +205,11 @@ A module takes one of two forms.
 
 | form | at `Threads` 1 | declares | runs |
 |---|---|---|---|
-| threads above `Threads` 1 only | starts no thread | nothing for threads | on every host; where a host starts no thread, on the threads it has |
+| threads above `Threads` 1 only | starts no thread | nothing for threads | on every host that follows this document; where a host starts no thread, on the threads it has |
 | a thread at every setting | starts a thread for its search or its input | `requires=threads` | only where a host starts threads; in a browser, on a cross-origin isolated page |
 
-- **The first form is the one to choose.** It runs on every page. An engine reaches it through the poll
+- **The first form is the one to choose.** It runs on every page. A plain preview-1 host that gives no shared
+  memory still refuses it, because it cannot answer the memory import. An engine reaches it through the poll
   helper, with its search's other threads started only above `Threads` 1.
 - **The second form keeps a thread engine as it is.** Its UCI loop must still meet § What a module does with
   each line and § The end of input. A native thread engine often answers an `isready` ahead of a line queued
@@ -466,5 +467,7 @@ No check exists yet for a host. A second host is checked by running modules that
   no phone has had a large shared memory's maximum put to it.
 - **A module in the first form of § Threads.** No adapted engine starts threads only above `Threads` 1.
 - **Rust's `wasm32-wasip1-threads`.** Only a C module with threads has run.
-- **A host other than this one.** The fixed answers were chosen from what C, C++, Rust, Go and
-  AssemblyScript modules call. Another language's runtime may call more.
+- **A live session under another host.** browser_wasi_shim played C, C++, Rust, Go and AssemblyScript modules
+  as this host does, given each session's whole input. No other host has delivered input to a running search.
+  The fixed answers were chosen from what those languages' modules call; another language's runtime may call
+  more.

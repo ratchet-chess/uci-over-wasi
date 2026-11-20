@@ -30,6 +30,8 @@ flowchart LR
   whole module.
 - **Every host has WebAssembly 2.0, fixed-width SIMD among it** (`docs/uci-over-wasi.md` § Form). So a module
   with SIMD needs no second file without it.
+- **A runtime can lack SIMD on an old CPU.** JavaScriptCore, in Safari and Bun, turns off WebAssembly SIMD on an
+  x86-64 CPU without AVX. A module with SIMD does not run there.
 - **A module declares each feature beyond that** (`docs/uci-over-wasi.md` § The declaration). A host without
   one refuses the module and says why. An engine ships one module, never a second file per feature level.
 - **The runtime chooses the CPU's instructions when it compiles the module.** One file serves x86 and ARM, so
@@ -57,6 +59,10 @@ flowchart LR
 inputs, a relaxed operation gives a result that the runtime chooses, and a module could then search different
 nodes on different CPUs. The 8-bit dot product is exact when its second operand's bytes are in [0, 127], as a
 net's clamped activations are. So a net with 8-bit layers gains from it, and one with 16-bit layers does not.
+
+**Relaxed SIMD is pending in Safari.** Safari 27.3, in beta on 2026-11-20, adds it; no released Safari has it. A
+module that declares `requires=relaxed-simd` is refused in Safari until that release. Chrome, Firefox, Node from
+21 and Bun have it on.
 
 ## Limits that no edit removes
 
