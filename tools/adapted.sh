@@ -3,7 +3,8 @@
 #
 #   tools/adapted.sh fetch <folder>   gets the engine's source at its pin; the one step that needs network
 #   tools/adapted.sh check <folder>   builds the native engine and the module, compares them, and runs the checker
-#   tools/adapted.sh echo             builds helper/echo.c, the smallest module on the helper, and runs the checker
+#   tools/adapted.sh echo             builds helper/echo.c, the smallest module on the helper, with and without
+#                                     threads, and runs the checker
 #
 # The pin file is shell text. It sets:
 #   url, commit      the engine's public git repo and the commit to build
@@ -23,7 +24,9 @@
 # are run in the folder's state, tmp/adapted/<folder>/, so a build finds there what fetch.sh left.
 #
 # A build sees WASI_SDK; CC_WASI and CXX_WASI, its compilers for the module; HELPER, the helper's folder;
-# HELPER_O, the C helper's object; WRAP, the link flag that makes a missed thread start fail; and JOBS.
+# HELPER_O, the C helper's object; WRAP, the link flag that makes a missed thread start fail; and JOBS. A module
+# with threads (docs/uci-over-wasi.md § Threads) uses CC_WASI_THREADS, CXX_WASI_THREADS, HELPER_O_THREADS and
+# THREADS_LINK, its link flags but the memory's maximum, and no WRAP.
 # The toolchains come from tools/toolchains.sh unless WASI_SDK is already set. State is in tmp/adapted/.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,14 +34,25 @@ cmd=${1:-}
 [ -n "${WASI_SDK:-}" ] || eval "$("$here/tools/toolchains.sh" env)"
 export WASI_SDK
 export CC_WASI="$WASI_SDK/bin/clang --target=wasm32-wasip1" CXX_WASI="$WASI_SDK/bin/clang++ --target=wasm32-wasip1"
+export CC_WASI_THREADS="$WASI_SDK/bin/clang --target=wasm32-wasip1-threads -pthread"
+export CXX_WASI_THREADS="$WASI_SDK/bin/clang++ --target=wasm32-wasip1-threads -pthread"
+export THREADS_LINK="-Wl,--import-memory,--export-memory,--shared-memory"
 export HELPER=$here/helper WRAP=-Wl,--wrap=pthread_create JOBS=${JOBS:-1}
-helper_o() { mkdir -p "$1" && $CC_WASI -O2 -Wall -Wextra -c "$HELPER/uci_wasi.c" -o "$1/uci_wasi.o" && export HELPER_O=$1/uci_wasi.o; }
+helper_o() {
+  mkdir -p "$1" && $CC_WASI -O2 -Wall -Wextra -c "$HELPER/uci_wasi.c" -o "$1/uci_wasi.o" && export HELPER_O=$1/uci_wasi.o
+  $CC_WASI_THREADS -O2 -Wall -Wextra -c "$HELPER/uci_wasi.c" -o "$1/uci_wasi-threads.o" && export HELPER_O_THREADS=$1/uci_wasi-threads.o
+}
 
 if [ "$cmd" = echo ]; then
   work=$here/tmp/adapted/echo
   helper_o "$work"
   $CC_WASI -O2 -Wall -Wextra -I"$HELPER" "$HELPER/echo.c" "$HELPER_O" $WRAP -o "$work/echo.wasm"
-  exec bun "$here/tools/wasi-check.ts" "$work/echo.wasm"
+  bun "$here/tools/wasi-check.ts" "$work/echo.wasm"
+  # the first form of threads: checked where no thread starts, then on two threads
+  $CC_WASI_THREADS -O2 -Wall -Wextra -I"$HELPER" "$HELPER/echo.c" "$HELPER_O_THREADS" $THREADS_LINK \
+    -Wl,--max-memory=67108864 -o "$work/echo-threads.wasm"
+  bun "$here/tools/wasi-check.ts" "$work/echo-threads.wasm"
+  exec bun "$here/tools/wasi-check.ts" "$work/echo-threads.wasm" --threads 2
 fi
 
 folder=${2:-}

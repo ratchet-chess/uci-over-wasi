@@ -25,7 +25,8 @@
  * under a host that starts no thread (main.ts UCI_OVER_WASI_SPAWN=0), as a page
  * that is not cross-origin isolated runs it; its `threads` check sets Threads 2
  * there. --threads sets the option to <n> in the checks that start a session
- * with `uci` and `isready`, to check input during a search on several threads.
+ * with `uci` and `isready`, under a host that starts threads, to check input
+ * during a search on several threads.
  *
  * Each check starts a fresh process. It prints one line per check and exits 1
  * if any failed. This script starts the build wherever
@@ -152,8 +153,8 @@ if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--profile polls
 const declared = declarationOf(readFileSync(module));
 const profile = asked ?? declared.profile;
 const used = featuresOf(readFileSync(module));
-/** whether the host starts threads: not for a module that imports thread-spawn without requiring threads */
-const spawns = !used.threadSpawn || declared.requires.includes("threads");
+/** whether the host starts threads: not for a module that imports thread-spawn without requiring threads, unless --threads */
+const spawns = !used.threadSpawn || declared.requires.includes("threads") || threadCount !== undefined;
 
 /**
  * The module's `requires` line names each feature beyond the floor that it uses, and no other. Whether a
@@ -170,6 +171,7 @@ async function declaration(): Promise<string> {
   if (wrong.length) throw new Error(wrong.join("; "));
   const parts = [`requires=${declared.requires.join(" ") || "(none)"}`];
   if (!spawns) parts.push("imports thread-spawn without requiring threads, so it is checked under a host that starts no thread");
+  else if (used.threadSpawn && !declared.requires.includes("threads")) parts.push("imports thread-spawn without requiring threads; checked with --threads under a host that starts threads");
   if (used.relaxed.size) parts.push(`relaxed ops ${[...used.relaxed].map(([op, n]) => `${op} ×${n}`).join(", ")}: their exactness is shown by the node signature on x86 and ARM, not here`);
   return parts.join("; ");
 }
@@ -212,7 +214,8 @@ async function bench(): Promise<string> {
  * answers on the one thread it has.
  */
 async function threads(): Promise<string> {
-  if (spawns) return used.threadSpawn ? `skipped: the module requires threads${threadCount ? "" : "; --threads checks it on several"}` : "skipped: no thread-spawn import";
+  if (!used.threadSpawn) return "skipped: no thread-spawn import";
+  if (spawns) return threadCount ? `skipped: --threads ${threadCount} checks the module on several threads` : "skipped: the module requires threads; --threads checks it on several";
   const run = new Run(module);
   run.send("uci");
   await run.expect("uciok", START_MS);

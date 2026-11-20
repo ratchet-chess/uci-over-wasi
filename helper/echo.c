@@ -1,13 +1,27 @@
-/* A toy UCI loop on the helper, to run tools/wasi-check.ts against it. */
+/* A toy UCI loop on the helper, to run tools/wasi-check.ts against it. Built for wasm32-wasip1-threads, it
+   is also the first form of the spec's § Threads: threads only above Threads 1, and a spawn that fails
+   leaves it searching on the threads it has. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "uci_wasi.h"
+#ifdef _REENTRANT
+#include <pthread.h>
+#include <stdatomic.h>
+static int threads = 1;
+static atomic_int stopping;
+static void *spin(void *arg) { volatile unsigned long n = 0; while (!atomic_load(&stopping)) n++; return arg; }
+#endif
 static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 int main(void) {
     int black = 0;
     setvbuf(stdout, NULL, _IOLBF, 0);
     for (const char *l; (l = uci_getline());) {
+#ifdef _REENTRANT
+        if (!strcmp(l, "uci")) puts("option name Threads type spin default 1 min 1 max 4");
+        if (!strncmp(l, "setoption name Threads value ", 29)) threads = atoi(l + 29);
+#endif
         if (!strcmp(l, "uci")) puts("option name Ponder type check default false\nuciok");
         else if (!strcmp(l, "isready")) puts("readyok");
         else if (!strncmp(l, "position", 8)) black = strstr(l, "e2e4") && !strstr(l, "e7e5");
@@ -16,12 +30,23 @@ int main(void) {
             int infinite = !!strstr(l, "infinite"), ponder = !!strstr(l, "ponder"), stop = 0;
             double end = now() + (strstr(l, "movetime") ? 1500 : strstr(l, "depth") ? 10 : 500);
             volatile unsigned long n = 0;
+#ifdef _REENTRANT
+            pthread_t helpers[4];
+            int started = 0;
+            atomic_store(&stopping, 0);
+            while (started < threads - 1 && !pthread_create(&helpers[started], NULL, spin, NULL)) started++;
+#endif
             while (!stop && (infinite || ponder || now() < end)) {
                 for (int i = 0; i < 100000; i++) n++;
                 int h = uci_poll(infinite || ponder);
                 if (h & UCI_STOP) stop = 1;
                 if (h & UCI_PONDERHIT) ponder = 0, end = now() + 500;
             }
+#ifdef _REENTRANT
+            atomic_store(&stopping, 1);
+            for (int i = 0; i < started; i++) pthread_join(helpers[i], NULL);
+            printf("info string searched on %d threads\n", started + 1);
+#endif
             puts(black ? "bestmove e7e5" : "bestmove e2e4");
         }
     }

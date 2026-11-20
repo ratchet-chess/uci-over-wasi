@@ -439,7 +439,9 @@ that meets this document.
 - **For both:** a session whose lines each end with a carriage return and a line feed.
 - **For a module that imports `thread-spawn` without requiring threads:** every check runs under a host that
   starts no thread, and one more check searches at `Threads` 2 there.
-- **`--threads <n>`** sets `Threads` in the checks of input during a search.
+- **`--threads <n>`** sets `Threads` in the checks of input during a search, under a host that starts threads.
+- **Not checked:** that `Threads` defaults to 1, that a module without threads caps it at 1, and that a module
+  reads fd 0 from one thread at a time.
 
 ```sh
 bun tools/wasi-check.ts <module.wasm> [--threads <n>] [--bench <nodes>]

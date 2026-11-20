@@ -88,7 +88,7 @@ A module may search on several threads (`docs/uci-over-wasi.md` § Threads), in 
 
 | language | build |
 |---|---|
-| C, C++ | `--target=wasm32-wasip1-threads -pthread`; link with `-Wl,--import-memory,--export-memory,--shared-memory,--max-memory=<bytes>` and no `--wrap=pthread_create` |
+| C, C++ | `--target=wasm32-wasip1-threads -pthread`, for the helper's object too; link with `-Wl,--import-memory,--export-memory,--shared-memory,--max-memory=<bytes>` and no `--wrap=pthread_create` |
 | Rust | `--target wasm32-wasip1-threads`; no Rust module with threads has run yet |
 | Go | no threads |
 
