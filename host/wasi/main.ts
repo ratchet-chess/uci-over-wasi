@@ -4,13 +4,18 @@
  * Runs a WASI build as a UCI engine under Bun or Node: stdin feeds the engine's
  * input ring, and the engine runs on its own thread (thread.ts), so a `stop`
  * reaches a running search. A build that declares itself deaf (wasi.ts declarationOf)
- * never gets a `stop` or an unbounded `go`.
+ * never gets a `stop` or an unbounded `go`. A wasi-threads build's threads are
+ * Workers too (thread.ts).
  *
  *   bun host/wasi/main.ts <build.wasm> [args...]   (or node)
  *   bun host/wasi/main.ts engine.wasm bench
  *
  * The arguments after the build go to the engine as its command line. A Bun
  * executable (Ratchet's tools/package.ts) embeds one build and calls runEngine.
+ *
+ * UCI_OVER_WASI_SPAWN=0 in the environment makes this a host that starts no
+ * thread, as a page that is not cross-origin isolated is: tools/wasi-check.ts
+ * checks there a module that imports thread-spawn without requiring threads.
  */
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
@@ -22,10 +27,11 @@ import { DEAF_REFUSAL, Ring, declarationOf, refusal, unheard, type Profile } fro
  */
 export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new URL("./thread.ts", import.meta.url)): void {
   let profile: Profile;
+  const canSpawn = process.env.UCI_OVER_WASI_SPAWN !== "0";
   try {
     // a profile or a feature this host does not know, or a feature it lacks: the module is not run
     const declaration = declarationOf(wasm);
-    const why = refusal(declaration);
+    const why = refusal(declaration, canSpawn);
     if (why) throw new Error(why);
     profile = declaration.profile;
   } catch (e) {
@@ -33,7 +39,14 @@ export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new UR
     process.exit(1);
   }
   const ring = new Ring();
-  const worker = new Worker(thread, { workerData: { wasm, ring: ring.buffer, args } });
+  // a spawned thread that exits or traps sets slot 1 of ctl (thread.ts), and this ends the process
+  const ctl = new SharedArrayBuffer(8);
+  const ended = new Int32Array(ctl);
+  setInterval(() => {
+    const code = Atomics.load(ended, 1);
+    if (code !== 0) process.exit(code - 1);
+  }, 10).unref();
+  const worker = new Worker(thread, { workerData: { wasm, ring: ring.buffer, args, thread: thread.href, spawns: canSpawn, ctl } });
   worker.on("message", (code: number) => process.exit(code));
   worker.on("error", (e: Error) => {
     process.stderr.write(`engine error: ${e.stack ?? e}\n`);

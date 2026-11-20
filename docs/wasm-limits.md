@@ -51,7 +51,7 @@ flowchart LR
 | SSE2 to SSE4.1, NEON | fixed-width SIMD: 128-bit vectors, which every host has | One vector path serves x86 and ARM. |
 | AVX2, AVX-512 | no wider vector | A 256-bit loop runs as two 128-bit steps. |
 | AVX-512 VNNI | relaxed SIMD's dot products, only in their exact form | See the note below. |
-| threads | the threads feature, with shared memory | A module has one thread (`docs/uci-over-wasi.md` § Form). |
+| threads | wasi-threads, with a shared memory | A module searches on several threads where its host starts them (`docs/uci-over-wasi.md` § Threads). |
 
 **A module uses relaxed SIMD only where the result is fixed** (`docs/uci-over-wasi.md` § Form). For some
 inputs, a relaxed operation gives a result that the runtime chooses, and a module could then search different
@@ -62,7 +62,8 @@ net's clamped activations are. So a net with 8-bit layers gains from it, and one
 
 | limit | what it costs | where it is stated or measured |
 |---|---|---|
-| One thread | An engine with a parallel search plays on one thread. | `docs/uci-over-wasi.md` § Form |
+| Threads only where a host starts them | On a page that is not cross-origin isolated, a module plays on one thread, and one that requires threads does not run. | `docs/uci-over-wasi.md` § Threads |
+| One memory maximum for every device | A module with threads fixes its memory's maximum at the link, and some phones refuse a large one. `Hash` fits inside it. | `docs/uci-over-wasi.md` § Threads |
 | 128-bit vectors | A net runs narrower than its AVX2 or AVX-512 build. | § CPU features, above |
 | No PEXT, prefetch or large pages | The engine takes the path it has for a CPU without them. | § CPU features, above |
 | A 32-bit address space | Memory is at most 4 GiB, and a browser can give less. `Hash` has a maximum. | `docs/uci-over-wasi.md` § UCI options; `results/browser.md`, largest memory |
@@ -84,9 +85,9 @@ Each row is an edit that adapts an engine. An engine written for the target star
 
 | a native engine has | the edit | where the how-to is |
 |---|---|---|
-| a search thread and an input thread | Run the search on the UCI thread, and poll through the poll helper. | `helper/README.md` § Adapting a thread engine |
+| a search thread and an input thread | Run the search on the UCI thread, and poll through the poll helper. Or keep the threads, and require them. | `helper/README.md` § Adapting a thread engine, § Keeping threads |
 | no input read during a search | Declare the deaf profile. The code stays as it is. | `helper/README.md` § A deaf engine |
-| other thread starts, such as a threaded hash clear | Remove each one, or make it inline. | `helper/README.md` § Adapting a thread engine |
+| other thread starts, such as a threaded hash clear | Remove each one, or make it inline. A module with threads may keep the ones above `Threads` 1. | `helper/README.md` § Adapting a thread engine |
 | a net read from a file | Compile the net into the module. | `docs/uci-over-wasi.md` § What a module may rely on |
 | a net compiled in through incbin | Use C23 `#embed`, because incbin's assembler block has no WebAssembly form. | `helper/README.md` § Building |
 | a net on SSE or AVX2 intrinsics only | Write a 128-bit path. Until then, the net runs on its scalar path. | `helper/README.md` § Building |
@@ -98,7 +99,7 @@ Each row is an edit that adapts an engine. An engine written for the target star
 ## What the limits mean for each engine
 
 - **An engine written for the target** loses only speed against a native engine of the same design. Its
-  design already follows the limits: one thread, magic multiplication, no file.
+  design already follows the limits: threads only above `Threads` 1, magic multiplication, no file.
 - **An adapted engine loses every row above that its native build used.** At a fixed depth it searches its
   native build's nodes, unless its play depends on the standard library (`helper/README.md` § Checking an
   adapted engine). On a clock it is slower, and it plays its endgames without tablebases.

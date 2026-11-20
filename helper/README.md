@@ -9,8 +9,8 @@ license can link it.
 | the engine | what the adapted engine needs |
 |---|---|
 | reads its input from inside its search, through `select`, `poll` or `ioctl(FIONREAD)` | no helper: wasi-libc builds all three on `poll_oneoff`. Its own code must then meet the end-of-input and `isready` rules, and pass the check. |
-| has an input thread and a stop flag | the helper: a module has one thread |
-| runs its search in a goroutine | the helper: with one thread and no preemption, the search runs only while the UCI loop is blocked |
+| has an input thread and a stop flag | the helper, so the module runs on every host; or no helper, and the module requires threads (§ Keeping threads) |
+| runs its search in a goroutine | the helper: Go has no threads in a module, and with no preemption the search runs only while the UCI loop is blocked |
 | reads nothing during a search | no helper, and the deaf profile (§ A deaf engine) |
 
 ## The three calls
@@ -39,7 +39,8 @@ return before it. Each file's header has the rules in full.
 5. **Replace each busy-wait with the helper's wait.** A finished `go infinite` or ponder search waits there
    for its `stop`.
 6. **Remove every other thread start, or make it inline:** helper threads, a threaded hash clear, timers.
-7. **Cap the options.** `Threads` has a maximum of 1. `Hash` has a maximum the module can allocate; the
+   A module built for threads keeps the search's helper threads above `Threads` 1 (§ Keeping threads).
+7. **Cap the options.** `Threads` has a maximum of 1 in a module without threads. `Hash` has a maximum the module can allocate; the
    adapted engines in `adapted/` use 1024 MB.
 8. **Keep the patch small.** Put each edit under the language's guard for the target, with a comment that
    says why.
@@ -52,8 +53,8 @@ return before it. Each file's header has the rules in full.
 | Rust | `cargo build --release --target wasm32-wasip1`; copy `uci_wasi.rs` into the crate as a module | Set the stack with `-Clink-arg=-zstack-size=<bytes>`. `-Ctarget-feature=+simd128` turns on SIMD. |
 | Go | `GOOS=wasip1 GOARCH=wasm go build`; copy `uci_wasi.go` into the tree as a package | Nothing traps a `go` statement the edits missed; such a goroutine never runs. |
 
-- **`--wrap=pthread_create`** sends every thread start to a function in the C helper that prints a message
-  and traps. A thread start the edits missed then fails loudly. Without it, wasi-libc's `pthread_create`
+- **`--wrap=pthread_create`** is for the `wasm32-wasip1` target, where a module starts no thread. It sends
+  every thread start to a function in the C helper that prints a message and traps. A thread start the edits missed then fails loudly. Without it, wasi-libc's `pthread_create`
   returns an error that an engine may ignore.
 - **The stack.** The linker's default stack is small. Give the module the size of the native search
   thread's stack.
@@ -72,6 +73,31 @@ return before it. Each file's header has the rules in full.
   module then declares `requires=relaxed-simd`, and its node signature must be equal on x86 and on ARM.
 - **Sizes have 32 bits.** `size_t`, `long` and Rust's `usize` are 32-bit types in a module. Where a value
   needs 64 bits, name a 64-bit type. A table that is compiled in with 64-bit entries is one such place.
+
+## Keeping threads
+
+A module may search on several threads (`docs/uci-over-wasi.md` § Threads), in one of two forms.
+
+1. **Threads above `Threads` 1 only, the form to choose.** Adapt the UCI loop through the poll helper, as
+   above. Start the search's other threads only when `Threads` is above 1. The module declares nothing for
+   threads, and plays on one thread where a host starts none.
+2. **The engine's own threads at every setting.** Keep the input thread or the search thread. The module
+   declares `requires=threads`, and runs only where a host starts threads. Its UCI loop still meets the
+   spec's line rules, which a native thread engine often breaks: an `isready` waits behind a queued line, and
+   the end of input does not end a timed search.
+
+| language | build |
+|---|---|
+| C, C++ | `--target=wasm32-wasip1-threads -pthread`; link with `-Wl,--import-memory,--export-memory,--shared-memory,--max-memory=<bytes>` and no `--wrap=pthread_create` |
+| Rust | `--target wasm32-wasip1-threads`; no Rust module with threads has run yet |
+| Go | no threads |
+
+- **The memory's maximum** is `--max-memory`. The largest `Hash` fits inside it, and phones refuse a large
+  one (`docs/uci-over-wasi.md` § Threads).
+- **A thread's stack.** `-Wl,-z,stack-size` sets the first thread's stack only. wasi-libc gives another thread
+  128 KiB with no guard, so set a search thread's stack with `pthread_attr_setstacksize`.
+- **`Threads` 1 plays the module's node signature.** Check it there with `--bench`, and the input during a
+  search with `--threads`.
 
 ## The declaration
 

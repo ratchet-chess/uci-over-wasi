@@ -22,19 +22,21 @@ engines and other hosts may adopt it.
 | **module** | the engine as one WebAssembly file that meets Part 1; this repo's `AGENTS.md` calls it a WASI build |
 | **host** | the program that runs a module: it answers the module's imports, feeds its input and takes its output |
 | **GUI** | whatever writes the UCI lines, as in UCI: a chess GUI, a match runner, a page, a person at a terminal |
-| **profile** | how an engine takes input during a search: **polls**, **deaf** or **threads** |
-| **polls** | the module reads its input from inside its search, so it hears `stop` |
+| **profile** | how an engine takes input during a search: **polls** or **deaf** |
+| **polls** | the module hears its input during a search, from inside its search or on an input thread of its own, so it hears `stop` |
 | **deaf** | the module reads nothing during a search, so a line takes effect when the search ends |
 | **unbounded** | said of a `go` that nothing ends but a `stop` (§ The unbounded `go`) |
 | **poll helper** | the file in `helper/` that puts a thread engine's search on the UCI thread |
+| **thread engine** | an engine whose search runs apart from its UCI loop: on a thread, with an input thread and a stop flag, or in a goroutine |
 
 ## Part 1: the module
 
 ### Form
 
 - The module is a WASI preview-1 command. It exports `_start` and `memory`.
-- It imports only from `wasi_snapshot_preview1`.
-- It has one thread. It uses no thread proposal, and it starts no thread.
+- It imports only from `wasi_snapshot_preview1`. A module with threads also has wasi-threads' two imports
+  (§ Threads).
+- It starts a thread only through wasi-threads.
 - It is a 32-bit module, so it addresses at most 4 GiB.
 - It may use every feature of WebAssembly 2.0, fixed-width SIMD with its 128-bit vectors among them. Every
   host has them (§ Running a module).
@@ -152,11 +154,13 @@ No other key exists yet. `requires` names each feature by its WebAssembly propos
 
 | feature | the module uses |
 |---|---|
+| `threads` | a thread at every `Threads` setting, `Threads` 1 included, so it cannot run where a host starts no thread (§ Threads) |
 | `relaxed-simd` | a relaxed SIMD operation, in the exact form § Form allows |
 | `exception-handling` | WebAssembly exception handling, as C's `setjmp` and `longjmp` and C++ exceptions build to |
 
-A module declares every feature it uses, and no feature it does not use. A host without a declared feature
-refuses the module, and says which feature it lacks. One module serves every host: an engine ships no second
+A module declares every feature it uses, and no feature it does not use. A module that starts threads only
+above `Threads` 1 is the one exception: it does not declare `threads`, because it runs without them. A host
+without a declared feature refuses the module, and says which feature it lacks. One module serves every host: an engine ships no second
 file without the feature.
 
 `llvm-objcopy --add-section=uci_over_wasi=<file>` writes the section into a linked module, with no change to
@@ -169,21 +173,59 @@ llvm-objcopy --add-section=uci_over_wasi=declaration.txt engine.wasm
 
 ### The profile
 
-An engine fits one of three profiles. A module declares one of the first two.
+An engine fits one of two profiles, and its module declares it.
 
 | profile | the engine | as a module |
 |---|---|---|
-| **polls** | reads input from inside its search | runs as it is |
+| **polls** | hears input during a search: from inside its search, or on an input thread of its own | runs as it is |
 | **deaf** | reads nothing during a search | runs as it is, and its host keeps from it what it could not act on |
-| **threads** | has an input thread and a stop flag, or a search in a goroutine | not supported: a module has one thread. It ships as polls through the poll helper. |
 
 - `profile=deaf` declares a deaf module. A deaf module needs the line: its host must keep `stop` and an
   unbounded `go` away from it.
 - `profile=polls`, no `profile` line, or no section declares a polls module.
 
+A thread engine is a polls module in one of two forms. Through the poll helper, its search runs on the UCI
+thread and polls. With threads, its input thread hears the line (§ Threads). Go has no threads in a module, so
+a Go engine takes the poll helper.
+
+### Threads
+
+A module may search on several threads, through wasi-threads, the thread proposal of preview 1.
+
+- It imports `thread-spawn` from module `wasi`, of type `(i32) -> i32`.
+- It imports its memory as `env.memory`: shared, and with a maximum. It also exports it as `memory`.
+- It exports `wasi_thread_start`, of type `(i32, i32) -> ()`.
+- A trap or a `proc_exit` on any thread ends the whole module.
+- It reads fd 0 from one thread at a time. A host's input is one stream.
+
+wasi-libc's `pthread_create` builds on these, in wasi-sdk's `wasm32-wasip1-threads` target. A spawn that the
+host cannot start returns a negative value, and `pthread_create` then returns `EAGAIN`.
+
+A module takes one of two forms.
+
+| form | at `Threads` 1 | declares | runs |
+|---|---|---|---|
+| threads above `Threads` 1 only | starts no thread | nothing for threads | on every host; where a host starts no thread, on the threads it has |
+| a thread at every setting | starts a thread for its search or its input | `requires=threads` | only where a host starts threads; in a browser, on a cross-origin isolated page |
+
+- **The first form is the one to choose.** It runs on every page. An engine reaches it through the poll
+  helper, with its search's other threads started only above `Threads` 1.
+- **The second form keeps a thread engine as it is.** Its UCI loop must still meet § What a module does with
+  each line and § The end of input. A native thread engine often answers an `isready` ahead of a line queued
+  before it, or ends a timed search at the end of input.
+- **A search on several threads does not repeat.** A node signature is read at `Threads` 1.
+
+The memory's maximum is fixed when the module is linked (wasm-ld's `--max-memory`). Without one, a shared
+memory never grows past its initial size.
+
+- **Some platforms reserve the whole maximum up front.** iOS Safari has refused shared memories of 2 and
+  4 GiB.
+- **One module serves every device,** so the maximum is one trade-off. A large one gives `Hash` room, and a
+  small one runs on more phones. The engine chooses it, and `Hash`'s maximum fits inside it.
+
 ### UCI options
 
-- **`Threads`** has a maximum of 1, if the engine has the option.
+- **`Threads`** defaults to 1, if the engine has the option. Its maximum is 1 for a module without threads.
 - **`Hash`** has a maximum the module can allocate. The adapted engines in `adapted/` cap it at 1024 MB. A table size wraps at
   4096 MB in a 32-bit module, and an allocation can fail well below that.
 
@@ -192,7 +234,8 @@ An engine fits one of three profiles. A module declares one of the first two.
 ### Running a module
 
 - The host's runtime has every feature of WebAssembly 2.0, fixed-width SIMD among them.
-- The host refuses a module that imports from anywhere but `wasi_snapshot_preview1`.
+- The host refuses a module that imports from anywhere but `wasi_snapshot_preview1`, except wasi-threads'
+  two imports (§ Starting threads).
 - It reads the module's declaration (§ Reading the declaration) before it runs the module.
 - It refuses a module that requires a feature it lacks, with a message that names the feature.
 - It calls `_start` once, with the command line the GUI gave.
@@ -229,8 +272,24 @@ A host answers every other preview-1 import the same way each time.
 | `fd_seek` | `ESPIPE` |
 | `environ_sizes_get`, `environ_get` | an empty environment |
 | `random_get` | bytes from a fixed seed |
-| `sched_yield` | success: one thread has nothing to yield to |
+| `sched_yield` | success: the runtime schedules the threads |
 | every other call | `ENOSYS` |
+
+### Starting threads
+
+A host answers a wasi-threads module's two imports.
+
+| import | the host answers |
+|---|---|
+| `env.memory` | a shared memory with the import's initial size and maximum; every thread of the module gets the same one |
+| `wasi.thread-spawn(arg)` | starts a thread that instantiates the same module with the same memory and the same answers, and calls its `wasi_thread_start(id, arg)`; returns `id`, unique and in [1, 2^29) |
+
+- **A trap or a `proc_exit` on any thread ends the module,** and every thread. The exit code is the
+  `proc_exit`'s, or 1 for a trap.
+- **Every thread reads the same monotonic clock.**
+- **A host that cannot start a thread where it runs** still gives the memory, and answers `thread-spawn` with a
+  negative value. It refuses a module that requires threads. A page that is not cross-origin isolated is such
+  a place, because its memory cannot reach a second Worker.
 
 ### Delivering input during a search
 
@@ -306,6 +365,9 @@ bun host/wasi/main.ts <module.wasm> bench    # the arguments after the module ar
 The module runs on a second thread, and standard input feeds a ring in shared memory (`Ring` in
 `host/wasi/wasi.ts`). Ratchet's `tools/package.ts` builds a Bun executable around one module from the same code.
 
+A wasi-threads module's threads are Workers too (`host/wasi/thread.ts`). Each one instantiates the module over
+the same shared memory. `UCI_OVER_WASI_SPAWN=0` in the environment makes the host one that starts no thread.
+
 ### In a browser
 
 `host/wasi/browser.ts` is a Worker script with stockfish.js's interface. Each message to it is one UCI
@@ -319,6 +381,9 @@ engine.postMessage("uci");
 
 `new Worker("engine.js#other.wasm")` loads another module, so one script runs any module. The module's
 standard error goes to the console.
+
+The Worker starts no thread. It refuses a module that requires threads, and runs any other wasi-threads module
+on one thread.
 
 A module that fails to load or compile ends the session. So does a failure while it runs, in the first two ways
 below. The Worker sends one `info string error:` line that names the cause, and then closes. In the degraded mode,
@@ -363,7 +428,8 @@ that meets this document.
 
 `tools/wasi-check.ts` runs a module under `host/wasi/` and checks the rules of Part 1.
 
-- **For every module:** its `requires` line names each feature it uses and no other.
+- **For every module:** its `requires` line names each feature it uses and no other, with § The
+  declaration's exception for threads.
   `tools/wasm-features.ts` reads the features from the module's code, and lists each relaxed operation. That
   the operations are exact is not checked; § Form's proof is a node signature on two CPUs.
 - **For a polls module:** `stop`, `isready` and line order during a search; the end of input in each of
@@ -371,9 +437,12 @@ that meets this document.
 - **For a deaf module:** a bounded search ends by itself, and the host keeps `stop` and an unbounded `go`
   away from it.
 - **For both:** a session whose lines each end with a carriage return and a line feed.
+- **For a module that imports `thread-spawn` without requiring threads:** every check runs under a host that
+  starts no thread, and one more check searches at `Threads` 2 there.
+- **`--threads <n>`** sets `Threads` in the checks of input during a search.
 
 ```sh
-bun tools/wasi-check.ts <module.wasm> [--bench <nodes>]
+bun tools/wasi-check.ts <module.wasm> [--threads <n>] [--bench <nodes>]
 ```
 
 No check exists yet for a host. A second host is checked by running modules that pass this check.
@@ -382,5 +451,9 @@ No check exists yet for a host. A second host is checked by running modules that
 
 - **WebKit.** No module and no Worker has run in a WebKit browser.
 - **ARM.** No relaxed operation's exactness has been shown on an ARM CPU.
+- **Threads in a browser.** The reference host's Worker starts no thread. Headless Chrome and Firefox ran a
+  shared memory in a Worker on a page that is not cross-origin isolated, but no module.
+- **A module in the first form of § Threads.** No adapted engine starts threads only above `Threads` 1.
+- **Rust's `wasm32-wasip1-threads`.** Only a C module with threads has run.
 - **A host other than this one.** The fixed answers were chosen from what C, C++, Rust, Go and
   AssemblyScript modules call. Another language's runtime may call more.

@@ -30,7 +30,7 @@
  * A build that declares itself deaf (wasi.ts declarationOf) never gets a `stop` or an
  * unbounded `go` under the first two: the Worker answers those itself.
  */
-import { DEAF_REFUSAL, Queue, Ring, Script, canSuspend, declarationOf, profileOf, refusal, runModule, runSuspending, runWasi, unheard } from "./wasi.ts";
+import { DEAF_REFUSAL, Queue, Ring, Script, canSuspend, declarationOf, profileOf, refusal, runModule, runSuspending, runWasi, unheard, unthreaded } from "./wasi.ts";
 
 const ENGINE_THREAD = "uci-over-wasi-engine";
 
@@ -81,7 +81,8 @@ async function fetchBuild(): Promise<ArrayBuffer> {
   const res = await fetch(build);
   if (!res.ok) throw new Error(`${buildName}: ${res.status} ${res.statusText}`);
   const wasm = await res.arrayBuffer();
-  const why = refusal(declarationOf(new Uint8Array(wasm)));
+  // this Worker starts no thread yet: a wasi-threads module plays on one thread, and one that requires threads is refused
+  const why = refusal(declarationOf(new Uint8Array(wasm)), false);
   if (why) throw new Error(`${buildName}: ${why}`);
   if (!WebAssembly.validate(wasm)) throw new Error(`${buildName} is not a WebAssembly module`);
   return wasm;
@@ -127,7 +128,7 @@ async function suspended(): Promise<void> {
     const wasm = await fetchBuild();
     const module = await WebAssembly.compile(wasm);
     loaded(wasm);
-    await runSuspending(module, queue, [buildName], lineWriter());
+    await runSuspending(module, queue, [buildName], lineWriter(), unthreaded(new Uint8Array(wasm)));
   } catch (e) {
     scope.postMessage(`info string error: ${e}`);
   }
@@ -155,6 +156,7 @@ async function degraded(): Promise<void> {
   const options: string[] = [];
   let position = "";
   let module: WebAssembly.Module | undefined;
+  let bytes: Uint8Array | undefined;
   /** lines that came before the build had compiled */
   const early: string[] = [];
 
@@ -163,7 +165,7 @@ async function degraded(): Promise<void> {
     const first = line.trim() === "uci";
     const input = [...(first ? [] : ["uci", ...options, position]), line].filter((l) => l !== "").join("\n") + "\n";
     try {
-      runModule(module!, new Script(encoder.encode(input)), [buildName], lineWriter(!first));
+      runModule(module!, new Script(encoder.encode(input)), [buildName], lineWriter(!first), unthreaded(bytes!));
     } catch (e) {
       scope.postMessage(`info string error: ${e}`);
     }
@@ -190,6 +192,7 @@ async function degraded(): Promise<void> {
   try {
     // every build is run as a deaf one here; fetchBuild has refused a declaration this host cannot meet
     const wasm = await fetchBuild();
+    bytes = new Uint8Array(wasm);
     module = await WebAssembly.compile(wasm);
   } catch (e) {
     scope.postMessage(`info string error: ${e}`);

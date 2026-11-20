@@ -21,6 +21,12 @@
  * end of input must not cut a bench short. --bench-args is that command line,
  * default `bench`.
  *
+ * A module that imports wasi.thread-spawn without requiring threads is checked
+ * under a host that starts no thread (main.ts UCI_OVER_WASI_SPAWN=0), as a page
+ * that is not cross-origin isolated runs it; its `threads` check sets Threads 2
+ * there. --threads sets the option to <n> in the checks that start a session
+ * with `uci` and `isready`, to check input during a search on several threads.
+ *
  * Each check starts a fresh process. It prints one line per check and exits 1
  * if any failed. This script starts the build wherever
  * the script runs, so run another engine's build inside a container.
@@ -51,7 +57,7 @@ class Run {
   code: number | null | undefined;
 
   constructor(module: string, args: string[] = []) {
-    this.child = spawn(process.execPath, [HOST, module, ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    this.child = spawn(process.execPath, [HOST, module, ...args], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(spawns ? {} : { UCI_OVER_WASI_SPAWN: "0" }) } });
     this.child.stdout.on("data", (chunk: Buffer) => {
       this.partial += chunk.toString();
       for (let nl = this.partial.indexOf("\n"); nl >= 0; nl = this.partial.indexOf("\n")) {
@@ -139,35 +145,41 @@ if (asked !== undefined && asked !== "polls" && asked !== "deaf") throw new Erro
 const benchNodes = flag("--bench");
 const benchArgs = (flag("--bench-args") ?? "bench").split(" ");
 const only = flag("--only");
+const threadCount = flag("--threads");
 const module = argv[0];
-if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]");
+if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--profile polls|deaf] [--threads <n>] [--bench <nodes>] [--bench-args <args>] [--only <check>]");
 
 const declared = declarationOf(readFileSync(module));
 const profile = asked ?? declared.profile;
+const used = featuresOf(readFileSync(module));
+/** whether the host starts threads: not for a module that imports thread-spawn without requiring threads */
+const spawns = !used.threadSpawn || declared.requires.includes("threads");
 
 /**
  * The module's `requires` line names each feature beyond the floor that it uses, and no other. Whether a
  * relaxed op's result is fixed for its inputs is not checked here: its proof is the node signature on x86 and ARM.
  */
 async function declaration(): Promise<string> {
-  const used = featuresOf(readFileSync(module));
-  const uses: Record<Feature, boolean> = { "relaxed-simd": used.relaxed.size > 0, "exception-handling": used.exceptionHandling };
+  const uses: Record<Feature, boolean> = { threads: used.threadSpawn, "relaxed-simd": used.relaxed.size > 0, "exception-handling": used.exceptionHandling };
   const wrong: string[] = [];
   for (const [f, yes] of Object.entries(uses) as [Feature, boolean][]) {
-    if (yes && !declared.requires.includes(f)) wrong.push(`uses ${f} without requires=${f}`);
+    // a thread-spawn module need not require threads: it then plays on one thread where a host cannot spawn
+    if (yes && f !== "threads" && !declared.requires.includes(f)) wrong.push(`uses ${f} without requires=${f}`);
     if (!yes && declared.requires.includes(f)) wrong.push(`requires ${f} and does not use it`);
   }
   if (wrong.length) throw new Error(wrong.join("; "));
   const parts = [`requires=${declared.requires.join(" ") || "(none)"}`];
+  if (!spawns) parts.push("imports thread-spawn without requiring threads, so it is checked under a host that starts no thread");
   if (used.relaxed.size) parts.push(`relaxed ops ${[...used.relaxed].map(([op, n]) => `${op} ×${n}`).join(", ")}: their exactness is shown by the node signature on x86 and ARM, not here`);
   return parts.join("; ");
 }
 
-/** starts the module and takes it through `uci` and `isready` */
+/** starts the module and takes it through `uci`, the --threads option, and `isready` */
 async function start(): Promise<Run> {
   const run = new Run(module);
   run.send("uci");
   await run.expect("uciok", START_MS);
+  if (threadCount) run.send(`setoption name Threads value ${threadCount}`);
   run.send("isready");
   await run.expect("readyok", START_MS);
   return run;
@@ -193,6 +205,30 @@ async function bench(): Promise<string> {
     run.end();
   }
   return `${benchNodes} nodes with stdin at its end and open`;
+}
+
+/**
+ * A module that does not require threads, under a host that starts no thread, at Threads 2: it searches and
+ * answers on the one thread it has.
+ */
+async function threads(): Promise<string> {
+  if (spawns) return used.threadSpawn ? `skipped: the module requires threads${threadCount ? "" : "; --threads checks it on several"}` : "skipped: no thread-spawn import";
+  const run = new Run(module);
+  run.send("uci");
+  await run.expect("uciok", START_MS);
+  if (!run.lines.some((l) => /^option name Threads .*\bmax\s+([2-9]|\d\d)/i.test(l.text))) {
+    await quit(run);
+    return "skipped: no Threads option above 1";
+  }
+  const from = run.lines.length;
+  run.send("setoption name Threads value 2", "isready");
+  await run.expect("readyok", START_MS, from);
+  run.send("position startpos", "go movetime 500");
+  const best = await run.expect("bestmove", START_MS, from);
+  run.send("isready");
+  await run.expect("readyok", HEAR_MS, best + 1);
+  await quit(run);
+  return "with Threads 2 and every spawn refused, a bestmove and then readyok";
 }
 
 /** a session whose every line ends with a carriage return and a line feed, as a GUI on Windows may send it */
@@ -313,6 +349,8 @@ const deafChecks: Record<string, () => Promise<string | void>> = {
   },
 
   crlf,
+
+  threads,
 
   bench,
 };
@@ -475,6 +513,8 @@ const pollsChecks: Record<string, () => Promise<string | void>> = {
   },
 
   crlf,
+
+  threads,
 
   bench,
 };

@@ -33,8 +33,9 @@ General Public License, version 3, and `adapted/COPYING` has its text.
 * **An engine written for the target** follows Part 1 of the spec. Its search polls standard input, and it relies
   only on the seven WASI calls the spec lists.
 * **An existing engine** is adapted. `helper/README.md` is the how-to. An engine whose search has an input thread
-  links the poll helper, and its periodic time check calls it. An engine that reads nothing during a search
-  needs no helper: its module declares the deaf profile.
+  links the poll helper, and its periodic time check calls it. It may keep its search's other threads above
+  `Threads` 1. An engine that reads nothing during a search needs no helper: its module declares the deaf
+  profile.
 * **Check the module:**
 
 ```sh
