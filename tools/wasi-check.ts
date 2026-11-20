@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 the uci-over-wasi contributors. The license's text is in LICENSE.
 /**
- * Checks a WASI build against UCI over WASI's rules for input during a search,
- * under host/wasi and the runtime that runs this script.
+ * Checks a WASI build against UCI over WASI's rules: its declaration against the
+ * features it uses (wasm-features.ts), and its input during a search, under
+ * host/wasi and the runtime that runs this script.
  *
  *   bun tools/wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]
  *
  * --profile is the module's profile, default the one it declares (host/wasi
- * profileOf): polls, a module that reads stdin from inside its search, unless
+ * declarationOf): polls, a module that reads stdin from inside its search, unless
  * its custom section says deaf. A deaf module reads nothing during a search.
  * Its checks: a bounded search ends by itself, lines sent during it are handled
  * after it in order, the end of input ends the module after its bestmove, and
@@ -27,7 +28,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { profileOf } from "../host/wasi/wasi.ts";
+import { declarationOf, type Feature } from "../host/wasi/wasi.ts";
+import { featuresOf } from "./wasm-features.ts";
 
 const HOST = fileURLToPath(new URL("../host/wasi/main.ts", import.meta.url));
 /** a module's start: a large build compiles for seconds on a cold start */
@@ -140,7 +142,26 @@ const only = flag("--only");
 const module = argv[0];
 if (!module) throw new Error("usage: wasi-check.ts <build.wasm> [--profile polls|deaf] [--bench <nodes>] [--bench-args <args>] [--only <check>]");
 
-const profile = asked ?? profileOf(readFileSync(module));
+const declared = declarationOf(readFileSync(module));
+const profile = asked ?? declared.profile;
+
+/**
+ * The module's `requires` line names each feature beyond the floor that it uses, and no other. Whether a
+ * relaxed op's result is fixed for its inputs is not checked here: its proof is the node signature on x86 and ARM.
+ */
+async function declaration(): Promise<string> {
+  const used = featuresOf(readFileSync(module));
+  const uses: Record<Feature, boolean> = { "relaxed-simd": used.relaxed.size > 0, "exception-handling": used.exceptionHandling };
+  const wrong: string[] = [];
+  for (const [f, yes] of Object.entries(uses) as [Feature, boolean][]) {
+    if (yes && !declared.requires.includes(f)) wrong.push(`uses ${f} without requires=${f}`);
+    if (!yes && declared.requires.includes(f)) wrong.push(`requires ${f} and does not use it`);
+  }
+  if (wrong.length) throw new Error(wrong.join("; "));
+  const parts = [`requires=${declared.requires.join(" ") || "(none)"}`];
+  if (used.relaxed.size) parts.push(`relaxed ops ${[...used.relaxed].map(([op, n]) => `${op} ×${n}`).join(", ")}: their exactness is shown by the node signature on x86 and ARM, not here`);
+  return parts.join("; ");
+}
 
 /** starts the module and takes it through `uci` and `isready` */
 async function start(): Promise<Run> {
@@ -212,6 +233,8 @@ const DEAF_GO = "go depth 10";
 
 /** the deaf profile's checks; the `stop` and unbounded `go` they send are for the host to answer */
 const deafChecks: Record<string, () => Promise<string | void>> = {
+  declaration,
+
   /** a bounded search ends by itself, and the module answers after it */
   async bounded() {
     const run = await start();
@@ -295,6 +318,8 @@ const deafChecks: Record<string, () => Promise<string | void>> = {
 };
 
 const pollsChecks: Record<string, () => Promise<string | void>> = {
+  declaration,
+
   /** `stop` ends an unbounded search */
   async stop() {
     const run = await start();

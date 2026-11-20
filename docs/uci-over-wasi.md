@@ -36,11 +36,15 @@ engines and other hosts may adopt it.
 - It imports only from `wasi_snapshot_preview1`.
 - It has one thread. It uses no thread proposal, and it starts no thread.
 - It is a 32-bit module, so it addresses at most 4 GiB.
-- It may use fixed-width SIMD, with its 128-bit vectors. Every host has it (§ Running a module).
-- It uses no relaxed SIMD. A relaxed operation can give different results on different CPUs, so two runs of
-  a module would not be the same run.
-- It may use another WebAssembly feature beyond the first version, such as exception handling. A host runs
-  the module only where the runtime has that feature.
+- It may use every feature of WebAssembly 2.0, fixed-width SIMD with its 128-bit vectors among them. Every
+  host has them (§ Running a module).
+- Beyond those, it may use the features that § The declaration names, and it declares each one it uses.
+- It uses a relaxed SIMD operation only where the operation's result is fixed by its inputs. An example is
+  `i32x4.relaxed_dot_i8x16_i7x16_add_s` with every byte of its second operand in [0, 127]. Any other use
+  can give different results on different CPUs, so two runs of a module would not be the same run.
+- The proof that its relaxed operations are exact is its node signature: the same total of nodes over the
+  same searches, on an x86 CPU and on an ARM CPU. A checker can list a module's relaxed operations, but it
+  cannot read their operands' range from the module.
 
 The host calls `_start` once. The module's whole session runs inside that call.
 
@@ -134,6 +138,35 @@ A module decides this in its own terms. A limit the engine does not act on is no
 
 The third case matters at the end of input. An engine alone would search such a `go` to its depth limit.
 
+### The declaration
+
+A module declares itself in a custom section named `uci_over_wasi`. The section holds lines of `key=value`,
+and each line ends with a line feed.
+
+| key | value | with no such line |
+|---|---|---|
+| `profile` | the module's profile: `polls` or `deaf` (§ The profile) | polls |
+| `requires` | the features beyond WebAssembly 2.0 that the module uses, separated by spaces | none |
+
+No other key exists yet. `requires` names each feature by its WebAssembly proposal's name:
+
+| feature | the module uses |
+|---|---|
+| `relaxed-simd` | a relaxed SIMD operation, in the exact form § Form allows |
+| `exception-handling` | WebAssembly exception handling, as C's `setjmp` and `longjmp` and C++ exceptions build to |
+
+A module declares every feature it uses, and no feature it does not use. A host without a declared feature
+refuses the module, and says which feature it lacks. One module serves every host: an engine ships no second
+file without the feature.
+
+`llvm-objcopy --add-section=uci_over_wasi=<file>` writes the section into a linked module, with no change to
+the source:
+
+```sh
+printf 'profile=deaf\nrequires=exception-handling\n' > declaration.txt
+llvm-objcopy --add-section=uci_over_wasi=declaration.txt engine.wasm
+```
+
 ### The profile
 
 An engine fits one of three profiles. A module declares one of the first two.
@@ -144,15 +177,9 @@ An engine fits one of three profiles. A module declares one of the first two.
 | **deaf** | reads nothing during a search | runs as it is, and its host keeps from it what it could not act on |
 | **threads** | has an input thread and a stop flag, or a search in a goroutine | not supported: a module has one thread. It ships as polls through the poll helper. |
 
-A module declares its profile in a custom section named `uci_over_wasi`. The section holds lines of
-`key=value`.
-
-- `profile=deaf` declares a deaf module.
+- `profile=deaf` declares a deaf module. A deaf module needs the line: its host must keep `stop` and an
+  unbounded `go` away from it.
 - `profile=polls`, no `profile` line, or no section declares a polls module.
-- No other key exists yet.
-
-`llvm-objcopy --add-section=uci_over_wasi=<file>` writes the section into a linked module, with no change to
-the source. A deaf module needs the section: its host must keep `stop` and an unbounded `go` away from it.
 
 ### UCI options
 
@@ -164,9 +191,10 @@ the source. A deaf module needs the section: its host must keep `stop` and an un
 
 ### Running a module
 
-- The host's runtime has fixed-width SIMD.
+- The host's runtime has every feature of WebAssembly 2.0, fixed-width SIMD among them.
 - The host refuses a module that imports from anywhere but `wasi_snapshot_preview1`.
-- It reads the module's profile (§ Reading the profile) before it runs the module.
+- It reads the module's declaration (§ Reading the declaration) before it runs the module.
+- It refuses a module that requires a feature it lacks, with a message that names the feature.
 - It calls `_start` once, with the command line the GUI gave.
 - The module ends when `_start` returns, with code 0, or when it calls `proc_exit`.
 
@@ -251,13 +279,17 @@ counts as a bound, so a host need not know the side to move.
 
 The page's hard stop is to end the module's thread. It works under every profile.
 
-### Reading the profile
+### Reading the declaration
 
 A host reads the `uci_over_wasi` section from the module's bytes. It need not compile the module first.
 
 - A key the host does not know is ignored.
 - A `profile` value the host does not know means the host does not run the module. It could not tell what
   input the module's search takes.
+- A `requires` feature the host does not know means the host does not run the module. It could not tell
+  whether it has the feature.
+- A host checks a runtime's feature by validating the smallest module that uses it, with
+  `WebAssembly.validate`. `refusal` in `host/wasi/wasi.ts` has such modules.
 - The section has no version key. A later key is compatible, because its absence means this document.
 
 ## Part 3: the reference host
@@ -331,6 +363,9 @@ that meets this document.
 
 `tools/wasi-check.ts` runs a module under `host/wasi/` and checks the rules of Part 1.
 
+- **For every module:** its `requires` line names each feature it uses and no other.
+  `tools/wasm-features.ts` reads the features from the module's code, and lists each relaxed operation. That
+  the operations are exact is not checked; § Form's proof is a node signature on two CPUs.
 - **For a polls module:** `stop`, `isready` and line order during a search; the end of input in each of
   its cases; `quit`; and ponder.
 - **For a deaf module:** a bounded search ends by itself, and the host keeps `stop` and an unbounded `go`
@@ -346,5 +381,6 @@ No check exists yet for a host. A second host is checked by running modules that
 ### What has not been run
 
 - **WebKit.** No module and no Worker has run in a WebKit browser.
+- **ARM.** No relaxed operation's exactness has been shown on an ARM CPU.
 - **A host other than this one.** The fixed answers were chosen from what C, C++, Rust, Go and
   AssemblyScript modules call. Another language's runtime may call more.

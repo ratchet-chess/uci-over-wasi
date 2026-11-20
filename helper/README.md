@@ -58,7 +58,8 @@ return before it. Each file's header has the rules in full.
 - **The stack.** The linker's default stack is small. Give the module the size of the native search
   thread's stack.
 - **`setjmp` and `longjmp`** in C need `-mllvm -wasm-enable-sjlj -mexception-handling`, and `-lsetjmp` at
-  the link. The module then uses WebAssembly exception handling.
+  the link. The module then uses WebAssembly exception handling, and declares `requires=exception-handling`
+  (§ The declaration).
 - **C++ exceptions.** Build with `-fno-exceptions` where the engine throws nothing.
 - **Memory never shrinks.** Free the old hash table before allocating its replacement. In Go, also
   run the collector first.
@@ -66,19 +67,29 @@ return before it. Each file's header has the rules in full.
   in its place, and name the net's folder with `--embed-dir`. Rust's `include_bytes!` needs no change.
 - **A net on x86 intrinsics.** wasi-sdk refuses `immintrin.h`, so the engine builds on its scalar path.
   For a faster net, write a path on `wasm_simd128.h`. Portable vector source, such as Rust's `std::simd`,
-  compiles to 128-bit steps as written. A module uses no relaxed SIMD.
+  compiles to 128-bit steps as written.
+- **Relaxed SIMD** (`-mrelaxed-simd`) is allowed only in its exact form (`docs/uci-over-wasi.md` § Form). The
+  module then declares `requires=relaxed-simd`, and its node signature must be equal on x86 and on ARM.
 - **Sizes have 32 bits.** `size_t`, `long` and Rust's `usize` are 32-bit types in a module. Where a value
   needs 64 bits, name a 64-bit type. A table that is compiled in with 64-bit entries is one such place.
+
+## The declaration
+
+A module declares its profile, and each feature it uses beyond WebAssembly 2.0, in a custom section
+(`docs/uci-over-wasi.md` § The declaration). Add the section after the link:
+
+```sh
+printf 'requires=exception-handling\n' > declaration.txt
+llvm-objcopy --add-section=uci_over_wasi=declaration.txt engine.wasm
+```
+
+`tools/wasm-features.ts <module.wasm>` lists the features a module uses, and the checker compares them with
+the section.
 
 ## A deaf engine
 
 An engine that reads nothing during a search needs no helper and no change to its input code. Its module
-declares the deaf profile, so its host keeps `stop` and an unbounded `go` away from it:
-
-```sh
-printf 'profile=deaf\n' > profile.txt
-llvm-objcopy --add-section=uci_over_wasi=profile.txt engine.wasm
-```
+declares the deaf profile, `profile=deaf`, so its host keeps `stop` and an unbounded `go` away from it.
 
 ## Checking an adapted engine
 

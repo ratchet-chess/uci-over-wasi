@@ -3,7 +3,7 @@
 /**
  * Runs a WASI build as a UCI engine under Bun or Node: stdin feeds the engine's
  * input ring, and the engine runs on its own thread (thread.ts), so a `stop`
- * reaches a running search. A build that declares itself deaf (wasi.ts profileOf)
+ * reaches a running search. A build that declares itself deaf (wasi.ts declarationOf)
  * never gets a `stop` or an unbounded `go`.
  *
  *   bun host/wasi/main.ts <build.wasm> [args...]   (or node)
@@ -14,7 +14,7 @@
  */
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
-import { DEAF_REFUSAL, Ring, profileOf, unheard, type Profile } from "./wasi.ts";
+import { DEAF_REFUSAL, Ring, declarationOf, refusal, unheard, type Profile } from "./wasi.ts";
 
 /**
  * Runs the WASI build `wasm` with the command line `args`, its name first, and ends the process with its exit
@@ -23,9 +23,12 @@ import { DEAF_REFUSAL, Ring, profileOf, unheard, type Profile } from "./wasi.ts"
 export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new URL("./thread.ts", import.meta.url)): void {
   let profile: Profile;
   try {
-    profile = profileOf(wasm);
+    // a profile or a feature this host does not know, or a feature it lacks: the module is not run
+    const declaration = declarationOf(wasm);
+    const why = refusal(declaration);
+    if (why) throw new Error(why);
+    profile = declaration.profile;
   } catch (e) {
-    // a profile this host does not know: the module is not run
     process.stderr.write(`${(e as Error).message}\n`);
     process.exit(1);
   }

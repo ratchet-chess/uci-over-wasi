@@ -27,10 +27,10 @@
  * 3. The degraded mode (degraded, below), the last resort: no input reaches a
  *    running build, so each `go` runs a fresh instance of it.
  *
- * A build that declares itself deaf (wasi.ts profileOf) never gets a `stop` or an
+ * A build that declares itself deaf (wasi.ts declarationOf) never gets a `stop` or an
  * unbounded `go` under the first two: the Worker answers those itself.
  */
-import { DEAF_REFUSAL, Queue, Ring, Script, canSuspend, profileOf, runModule, runSuspending, runWasi, unheard } from "./wasi.ts";
+import { DEAF_REFUSAL, Queue, Ring, Script, canSuspend, declarationOf, profileOf, refusal, runModule, runSuspending, runWasi, unheard } from "./wasi.ts";
 
 const ENGINE_THREAD = "uci-over-wasi-engine";
 
@@ -74,12 +74,15 @@ const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
 
 /**
  * The build's bytes. A missing build must fail here: fetch resolves on a 404, and a dev server may
- * answer a missing file with its page, so neither status nor bytes can be passed on unchecked.
+ * answer a missing file with its page, so neither status nor bytes can be passed on unchecked. A build
+ * that declares a profile or a feature this host does not know, or a feature it lacks, fails here too.
  */
 async function fetchBuild(): Promise<ArrayBuffer> {
   const res = await fetch(build);
   if (!res.ok) throw new Error(`${buildName}: ${res.status} ${res.statusText}`);
   const wasm = await res.arrayBuffer();
+  const why = refusal(declarationOf(new Uint8Array(wasm)));
+  if (why) throw new Error(`${buildName}: ${why}`);
   if (!WebAssembly.validate(wasm)) throw new Error(`${buildName} is not a WebAssembly module`);
   return wasm;
 }
@@ -185,9 +188,8 @@ async function degraded(): Promise<void> {
   };
   scope.postMessage("info string the page is not cross-origin isolated (COOP same-origin, COEP require-corp) and this browser has no JavaScript Promise Integration: stop is heard when a search ends, and the hash table is not kept between searches");
   try {
+    // every build is run as a deaf one here; fetchBuild has refused a declaration this host cannot meet
     const wasm = await fetchBuild();
-    // every build is run as a deaf one here, but a profile this host does not know is still not run
-    profileOf(new Uint8Array(wasm));
     module = await WebAssembly.compile(wasm);
   } catch (e) {
     scope.postMessage(`info string error: ${e}`);

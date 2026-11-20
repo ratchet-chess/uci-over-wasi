@@ -23,29 +23,35 @@
  * gets a fixed answer (floorStubs), and a module that needs more than those
  * answers does not run here.
  *
- * A module that reads nothing during a search says so in a custom section
- * (profileOf). Its host answers in its place the lines such a search could not
- * act on (unheard), and passes on the rest.
+ * A module declares in a custom section (declarationOf) the features it needs
+ * beyond the floor, which a host without them refuses (refusal), and whether
+ * it reads nothing during a search. Such a module's host answers in its place
+ * the lines its search could not act on (unheard), and passes on the rest.
  *
  * The layouts are WASI preview 1's (WebAssembly/WASI, legacy/preview1/docs.md).
  */
 
-/** how a module takes input during a search: it polls stdin, or it is deaf until the search ends */
+/** how a module takes input during a search: it hears stdin during the search, or it is deaf until the search ends */
 export type Profile = "polls" | "deaf";
+
+/** the WebAssembly features beyond the floor that a module may need, by their proposal names */
+export type Feature = "relaxed-simd" | "exception-handling";
+const FEATURES: readonly Feature[] = ["relaxed-simd", "exception-handling"];
+
+/** what a module declares in its custom section: its profile, and the features it needs */
+export type Declaration = { profile: Profile; requires: Feature[] };
 
 /** the custom section a module declares itself in, as lines of key=value */
 const SECTION = "uci_over_wasi";
 
 /**
- * A module's profile, read from its bytes: the `profile` line of its
- * `uci_over_wasi` custom section, which holds lines of key=value, or polls when
- * it has no such section or line. A key this host does not know is ignored. A
- * profile it does not know throws: the host could not tell what input the
- * module's search takes, so it does not run the module. A build writes the
- * section with `llvm-objcopy --add-section=uci_over_wasi=<file>`, or from its
- * source.
+ * A module's declaration, read from its bytes: the `profile` and `requires` lines of its `uci_over_wasi`
+ * custom section, which holds lines of key=value. With no section or no line, a module polls and needs no
+ * feature. A key this host does not know is ignored. A profile or a feature it does not know throws: the
+ * host could not tell what the module needs, so it does not run it. A build writes the section with
+ * `llvm-objcopy --add-section=uci_over_wasi=<file>`, or from its source.
  */
-export function profileOf(wasm: Uint8Array): Profile {
+export function declarationOf(wasm: Uint8Array): Declaration {
   /** an unsigned LEB128 at `at`: its value and the offset after it */
   const leb = (at: number): [number, number] => {
     let value = 0;
@@ -55,7 +61,7 @@ export function profileOf(wasm: Uint8Array): Profile {
       if (b < 0x80) return [value, at];
     }
   };
-  let profile: Profile = "polls";
+  const declaration: Declaration = { profile: "polls", requires: [] };
   // a module is an 8-byte header, then sections: an id byte, a size, the content; a custom section (id 0) opens with its name
   for (let at = 8; at < wasm.length; ) {
     const id = wasm[at];
@@ -66,16 +72,51 @@ export function profileOf(wasm: Uint8Array): Profile {
       if (text.decode(wasm.subarray(name, name + nameLen)) === SECTION) {
         for (const line of text.decode(wasm.subarray(name + nameLen, body + size)).split("\n")) {
           const eq = line.indexOf("=");
-          if (eq < 0 || line.slice(0, eq).trim() !== "profile") continue;
+          if (eq < 0) continue;
+          const key = line.slice(0, eq).trim();
           const value = line.slice(eq + 1).trim();
-          if (value !== "polls" && value !== "deaf") throw new Error(`the module declares profile=${value}; this host knows polls and deaf`);
-          profile = value;
+          if (key === "profile") {
+            if (value !== "polls" && value !== "deaf") throw new Error(`the module declares profile=${value}; this host knows polls and deaf`);
+            declaration.profile = value;
+          } else if (key === "requires") {
+            for (const f of value.split(/\s+/).filter((w) => w !== "")) {
+              if (!FEATURES.includes(f as Feature)) throw new Error(`the module requires ${f}; this host knows ${FEATURES.join(", ")}`);
+              if (!declaration.requires.includes(f as Feature)) declaration.requires.push(f as Feature);
+            }
+          }
         }
       }
     }
     at = body + size;
   }
-  return profile;
+  return declaration;
+}
+
+/** a module's profile (declarationOf) */
+export function profileOf(wasm: Uint8Array): Profile {
+  return declarationOf(wasm).profile;
+}
+
+/**
+ * The smallest module that uses each feature, for WebAssembly.validate: whether this runtime has it.
+ * Exception handling has two encodings, the legacy `try` and `try_table`; a runtime with either counts.
+ */
+const PROBES: Record<Feature, number[][]> = {
+  // () -> v128: i8x16.relaxed_swizzle of two splats
+  "relaxed-simd": [[0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 15, 1, 13, 0, 65, 1, 253, 15, 65, 2, 253, 15, 253, 128, 2, 11]],
+  // () -> (): try with catch_all; try_table with no catch
+  "exception-handling": [
+    [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 8, 1, 6, 0, 6, 64, 25, 11, 11],
+    [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 8, 1, 6, 0, 31, 64, 0, 11, 11],
+  ],
+};
+
+/** why this host cannot run a module that declares `declaration`, or undefined if it can: a feature the runtime lacks */
+export function refusal(declaration: Declaration): string | undefined {
+  for (const f of declaration.requires) {
+    if (!PROBES[f].some((p) => WebAssembly.validate(new Uint8Array(p)))) return `the module requires ${f}, which this runtime does not have`;
+  }
+  return undefined;
 }
 
 /** the words of a `go` that end its search without a `stop`; `perft` is no search, and ends by itself */

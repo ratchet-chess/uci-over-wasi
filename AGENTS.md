@@ -22,7 +22,7 @@ where, ask the user.
 - `docs/wasm-limits.md`: what the WebAssembly target limits.
 - `helper/`: the poll helper, one file per language, its how-to, and `echo.c`, the smallest module on it.
 - `host/wasi/`: the reference host: under Bun and Node (`main.ts`, `thread.ts`), in a page (`browser.ts`), and the WASI calls both answer (`wasi.ts`).
-- `tools/wasi-check.ts`: the checker.
+- `tools/wasi-check.ts`: the checker. `tools/wasm-features.ts` reads the features a module uses, for its declaration check.
 - `tools/adapted.sh`: fetches, builds, compares and checks one adapted engine. Its header states the form of a folder of `adapted/`.
 - `tools/positions.ts`: a build's moves and node counts over a position file.
 - `tools/toolchains.sh` and `tools/toolchains.txt`: the pinned toolchains.
@@ -42,7 +42,7 @@ tools/adapted.sh check adapted/<folder>                   # both builds, their c
 
 - **Parts 1 and 2 are rules, and Part 3 is a record.** A rule binds every module or every host. Part 3 says what this repo's host does.
 - **A change to a rule changes the checker in the same commit.** A rule the checker cannot check says so in the spec.
-- **The published names stay.** They are the custom section `uci_over_wasi`, the helper's file names, and its calls `uci_getline`, `uci_poll` and `uci_wait`.
+- **The published names stay.** They are the custom section `uci_over_wasi` with its keys and values, the helper's file names, and its calls `uci_getline`, `uci_poll` and `uci_wait`.
 - **The helper has no dependency.** It is one file per language, which an engine copies into its tree.
 - **State what has not been run.** The spec's last section lists it.
 

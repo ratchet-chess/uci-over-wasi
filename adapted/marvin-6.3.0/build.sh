@@ -18,4 +18,7 @@ else
     -W -Wall -Wno-array-bounds -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
     -c {} -o "$tree/obj/$(basename {} .c).o"'
   $CC_WASI -O3 -mexception-handling "$tree"/obj/*.o "$HELPER_O" -lsetjmp -Wl,-z,stack-size=4194304 $WRAP -o "$out"
+  # the module uses exception handling, and says so for its host
+  printf 'requires=exception-handling\n' > "$tree/declaration.txt"
+  "$WASI_SDK/bin/llvm-objcopy" --add-section=uci_over_wasi="$tree/declaration.txt" "$out"
 fi

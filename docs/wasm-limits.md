@@ -28,10 +28,10 @@ flowchart LR
 
 - **The module names WebAssembly features, not CPU features.** A runtime that lacks one of them refuses the
   whole module.
-- **Every host has fixed-width SIMD** (`docs/uci-over-wasi.md` § Form). So a module with SIMD needs no
-  second file without it.
-- **Any other feature level is a separate file.** A host that offers two levels checks the runtime first,
-  with `WebAssembly.validate`. `FEATURES` in ratchet-bench's `web/bench.ts` has such checks.
+- **Every host has WebAssembly 2.0, fixed-width SIMD among it** (`docs/uci-over-wasi.md` § Form). So a module
+  with SIMD needs no second file without it.
+- **A module declares each feature beyond that** (`docs/uci-over-wasi.md` § The declaration). A host without
+  one refuses the module and says why. An engine ships one module, never a second file per feature level.
 - **The runtime chooses the CPU's instructions when it compiles the module.** One file serves x86 and ARM, so
   no module is built per processor.
 - **A native executable fixes its CPU level when it is compiled.** `NATIVE` in Ratchet's `tools/package.ts` lists
@@ -50,12 +50,13 @@ flowchart LR
 | large pages, NUMA | nothing | A module has one linear memory. |
 | SSE2 to SSE4.1, NEON | fixed-width SIMD: 128-bit vectors, which every host has | One vector path serves x86 and ARM. |
 | AVX2, AVX-512 | no wider vector | A 256-bit loop runs as two 128-bit steps. |
-| AVX-512 VNNI | nothing: relaxed SIMD has dot products, and a module uses none | See the note below. |
+| AVX-512 VNNI | relaxed SIMD's dot products, only in their exact form | See the note below. |
 | threads | the threads feature, with shared memory | A module has one thread (`docs/uci-over-wasi.md` § Form). |
 
-**A module uses no relaxed SIMD** (`docs/uci-over-wasi.md` § Form). For some inputs, a relaxed operation
-gives a result that the runtime chooses. A module that used one could then search different nodes on
-different CPUs.
+**A module uses relaxed SIMD only where the result is fixed** (`docs/uci-over-wasi.md` § Form). For some
+inputs, a relaxed operation gives a result that the runtime chooses, and a module could then search different
+nodes on different CPUs. The 8-bit dot product is exact when its second operand's bytes are in [0, 127], as a
+net's clamped activations are. So a net with 8-bit layers gains from it, and one with 16-bit layers does not.
 
 ## Limits that no edit removes
 
