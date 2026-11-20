@@ -20,6 +20,9 @@
  *    it, so this script runs twice. The Worker the page makes receives the page's
  *    lines and writes them into a ring (wasi.ts Ring). A nested worker, made from
  *    this same script and named ENGINE_THREAD, runs the build and reads the ring.
+ *    A wasi-threads build's threads are nested workers too, named SPAWNED_THREAD.
+ *    The outer Worker starts each one, because it never blocks: a browser may
+ *    hold back a Worker whose creator then blocks.
  * 2. Suspending the build (suspended, below), on any other page whose browser has
  *    JavaScript Promise Integration. One thread runs the build and receives the
  *    page's lines; the build's reads and polls suspend it so those lines arrive
@@ -28,11 +31,32 @@
  *    running build, so each `go` runs a fresh instance of it.
  *
  * A build that declares itself deaf (wasi.ts declarationOf) never gets a `stop` or an
- * unbounded `go` under the first two: the Worker answers those itself.
+ * unbounded `go` under the first two: the Worker answers those itself. Under the
+ * last two, a wasi-threads build plays on one thread, and one that requires
+ * threads is refused: its memory cannot reach a second worker.
  */
-import { DEAF_REFUSAL, Queue, Ring, Script, canSuspend, declarationOf, profileOf, refusal, runModule, runSuspending, runWasi, unheard, unthreaded } from "./wasi.ts";
+import { DEAF_REFUSAL, NO_SPAWN, Queue, Ring, Script, canSuspend, declarationOf, nextThreadId, profileOf, refusal, runModule, runSuspending, runThread, sharedMemory, unheard, unthreaded } from "./wasi.ts";
 
+/** the names of the nested workers this script runs as: the engine's thread, and a thread the engine spawned */
 const ENGINE_THREAD = "uci-over-wasi-engine";
+const SPAWNED_THREAD = "uci-over-wasi-thread";
+
+/** what the outer Worker posts a nested worker to run: the engine, or with `tid` one thread the engine spawned */
+type Start = {
+  module: WebAssembly.Module;
+  /** a wasi-threads module's shared memory; undefined for a module without one */
+  memory?: WebAssembly.Memory;
+  ring: SharedArrayBuffer;
+  args: string[];
+  /** slot 0: the last thread id given (wasi.ts nextThreadId) */
+  ids: SharedArrayBuffer;
+  /** the monotonic clock's zero, the same for every thread */
+  origin: number;
+  tid?: number;
+  arg?: number;
+};
+/** what a nested worker posts the outer Worker: a line of output, a spawn to start, or the module's end */
+type Note = string | { spawn: number; arg: number } | { exit: number };
 
 /** the parts of a dedicated worker's global scope used here; the project's TypeScript lib is the DOM's */
 const scope = globalThis as unknown as {
@@ -75,14 +99,14 @@ const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
 /**
  * The build's bytes. A missing build must fail here: fetch resolves on a 404, and a dev server may
  * answer a missing file with its page, so neither status nor bytes can be passed on unchecked. A build
- * that declares a profile or a feature this host does not know, or a feature it lacks, fails here too.
+ * that declares a profile or a feature this host does not know, or a feature it lacks, fails here too:
+ * `canSpawn` is whether this Worker starts threads.
  */
-async function fetchBuild(): Promise<ArrayBuffer> {
+async function fetchBuild(canSpawn: boolean): Promise<ArrayBuffer> {
   const res = await fetch(build);
   if (!res.ok) throw new Error(`${buildName}: ${res.status} ${res.statusText}`);
   const wasm = await res.arrayBuffer();
-  // this Worker starts no thread yet: a wasi-threads module plays on one thread, and one that requires threads is refused
-  const why = refusal(declarationOf(new Uint8Array(wasm)), false);
+  const why = refusal(declarationOf(new Uint8Array(wasm)), canSpawn);
   if (why) throw new Error(`${buildName}: ${why}`);
   if (!WebAssembly.validate(wasm)) throw new Error(`${buildName} is not a WebAssembly module`);
   return wasm;
@@ -125,7 +149,7 @@ async function suspended(): Promise<void> {
   const queue = new Queue();
   const loaded = feed((bytes) => queue.push(bytes));
   try {
-    const wasm = await fetchBuild();
+    const wasm = await fetchBuild(false);
     const module = await WebAssembly.compile(wasm);
     loaded(wasm);
     await runSuspending(module, queue, [buildName], lineWriter(), unthreaded(new Uint8Array(wasm)));
@@ -191,7 +215,7 @@ async function degraded(): Promise<void> {
   scope.postMessage("info string the page is not cross-origin isolated (COOP same-origin, COEP require-corp) and this browser has no JavaScript Promise Integration: stop is heard when a search ends, and the hash table is not kept between searches");
   try {
     // every build is run as a deaf one here; fetchBuild has refused a declaration this host cannot meet
-    const wasm = await fetchBuild();
+    const wasm = await fetchBuild(false);
     bytes = new Uint8Array(wasm);
     module = await WebAssembly.compile(wasm);
   } catch (e) {
@@ -202,16 +226,33 @@ async function degraded(): Promise<void> {
   for (const line of early.splice(0)) handle(line);
 }
 
-if (scope.name === ENGINE_THREAD) {
-  scope.onmessage = async (e: MessageEvent<{ wasm: ArrayBuffer; ring: SharedArrayBuffer; args: string[] }>) => {
-    // a build that does not compile or traps must still end the session, or the page waits forever
-    let code = 1;
+if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
+  // a nested worker: the engine, or one thread it spawned
+  scope.onmessage = (e: MessageEvent<Start>) => {
+    const d = e.data;
+    const note = (n: Note) => scope.postMessage(n);
+    let code: number | undefined = 1;
     try {
-      code = await runWasi(e.data.wasm, new Ring(e.data.ring), e.data.args, lineWriter());
+      if (!d.memory) code = runModule(d.module, new Ring(d.ring), d.args, lineWriter());
+      else {
+        const ids = new Int32Array(d.ids);
+        // the outer Worker starts the thread; the id is the module's at once, as wasi-threads asks
+        const spawn = (arg: number): number => {
+          const tid = nextThreadId(ids);
+          if (!tid) return NO_SPAWN(arg);
+          note({ spawn: tid, arg });
+          return tid;
+        };
+        const thread = d.tid === undefined ? undefined : { tid: d.tid, arg: d.arg! };
+        code = runThread(d.module, new Ring(d.ring), d.args, lineWriter(), { memory: d.memory, spawn }, d.origin, thread);
+      }
     } catch (err) {
-      scope.postMessage(`info string error: ${err}`);
+      // a build that traps must still end the session, or the page waits forever
+      note(`info string error: ${err}`);
     }
-    scope.postMessage({ exit: code });
+    // a spawned thread that returns ends itself alone; any other end ends the module, and every thread
+    if (code !== undefined) note({ exit: code });
+    else scope.close();
   };
 } else if (!scope.crossOriginIsolated) {
   if (canSuspend()) void suspended();
@@ -219,24 +260,39 @@ if (scope.name === ENGINE_THREAD) {
 } else {
   const ring = new Ring();
   const loaded = feed((bytes) => ring.push(bytes));
-  const engine = new Worker(script, { name: ENGINE_THREAD });
-  engine.onmessage = (e: MessageEvent<string | { exit: number }>) => {
-    if (typeof e.data === "string") scope.postMessage(e.data);
-    else {
-      engine.terminate();
-      scope.close();
-    }
+  const workers: Worker[] = [];
+  const end = () => {
+    for (const w of workers) w.terminate();
+    scope.close();
+  };
+  let base: Start | undefined;
+  /** starts a nested worker, and relays what it posts */
+  const start = (name: string, data: Start) => {
+    const w = new Worker(script, { name });
+    workers.push(w);
+    w.onmessage = (e: MessageEvent<Note>) => {
+      const n = e.data;
+      if (typeof n === "string") scope.postMessage(n);
+      else if ("exit" in n) end();
+      else start(SPAWNED_THREAD, { ...base!, tid: n.spawn, arg: n.arg });
+    };
+    w.onerror = (e) => {
+      scope.postMessage(`info string error: ${e.message}`);
+      end();
+    };
+    w.postMessage(data);
   };
   // a classic worker script has no top-level await
   void (async () => {
     try {
-      const wasm = await fetchBuild();
+      const wasm = await fetchBuild(true);
       loaded(wasm);
-      engine.postMessage({ wasm, ring: ring.buffer, args: [buildName] }, [wasm]);
+      const module = await WebAssembly.compile(wasm);
+      base = { module, memory: sharedMemory(new Uint8Array(wasm)), ring: ring.buffer, args: [buildName], ids: new SharedArrayBuffer(4), origin: performance.timeOrigin + performance.now() };
+      start(ENGINE_THREAD, base);
     } catch (e) {
       scope.postMessage(`info string error: ${e}`);
-      engine.terminate();
-      scope.close();
+      end();
     }
   })();
 }

@@ -287,6 +287,8 @@ A host answers a wasi-threads module's two imports.
 - **A trap or a `proc_exit` on any thread ends the module,** and every thread. The exit code is the
   `proc_exit`'s, or 1 for a trap.
 - **Every thread reads the same monotonic clock.**
+- **`thread-spawn` returns the id at once,** without waiting for the thread to start. The thread that called
+  it runs on inside the module, and may not yield until its search ends.
 - **A host that cannot start a thread where it runs** still gives the memory, and answers `thread-spawn` with a
   negative value. It refuses a module that requires threads. A page that is not cross-origin isolated is such
   a place, because its memory cannot reach a second Worker.
@@ -366,7 +368,10 @@ The module runs on a second thread, and standard input feeds a ring in shared me
 `host/wasi/wasi.ts`). Ratchet's `tools/package.ts` builds a Bun executable around one module from the same code.
 
 A wasi-threads module's threads are Workers too (`host/wasi/thread.ts`). Each one instantiates the module over
-the same shared memory. `UCI_OVER_WASI_SPAWN=0` in the environment makes the host one that starts no thread.
+the same shared memory. The process's main thread starts each one when the module asks, and ends the process
+when any thread exits or traps. A Worker's standard error and its errors reach the process through the Worker's
+creator, so a creator inside the module, which does not yield, would lose a thread's error message. `UCI_OVER_WASI_SPAWN=0` in the environment makes the host one that starts no
+thread.
 
 ### In a browser
 
@@ -382,8 +387,12 @@ engine.postMessage("uci");
 `new Worker("engine.js#other.wasm")` loads another module, so one script runs any module. The module's
 standard error goes to the console.
 
-The Worker starts no thread. It refuses a module that requires threads, and runs any other wasi-threads module
-on one thread.
+A wasi-threads module's threads need a cross-origin isolated page, where the module's memory can reach other
+workers. There the Worker compiles the module once and makes its shared memory. It starts the engine, and each
+thread the module asks for, as a nested worker. It never blocks, and Chrome does not start a Worker whose
+creator then blocks. An exit or a trap on any thread ends all of them. On any other
+page the Worker starts no thread. It refuses a module that requires threads, and runs any other wasi-threads
+module on one thread. In the degraded mode, each `go`'s fresh instance gets a fresh shared memory.
 
 A module that fails to load or compile ends the session. So does a failure while it runs, in the first two ways
 below. The Worker sends one `info string error:` line that names the cause, and then closes. In the degraded mode,
@@ -453,8 +462,8 @@ No check exists yet for a host. A second host is checked by running modules that
 
 - **WebKit.** No module and no Worker has run in a WebKit browser.
 - **ARM.** No relaxed operation's exactness has been shown on an ARM CPU.
-- **Threads in a browser.** The reference host's Worker starts no thread. Headless Chrome and Firefox ran a
-  shared memory in a Worker on a page that is not cross-origin isolated, but no module.
+- **Threads on a phone.** Modules with threads have run in headless Chrome and Firefox on a desktop only, and
+  no phone has had a large shared memory's maximum put to it.
 - **A module in the first form of § Threads.** No adapted engine starts threads only above `Threads` 1.
 - **Rust's `wasm32-wasip1-threads`.** Only a C module with threads has run.
 - **A host other than this one.** The fixed answers were chosen from what C, C++, Rust, Go and

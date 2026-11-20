@@ -700,6 +700,36 @@ export function runModule(module: WebAssembly.Module, input: Input, args: string
 }
 
 /**
+ * Runs one thread of a wasi-threads instance: the engine's `_start`, or with `thread` a spawned thread's
+ * `wasi_thread_start(tid, arg)`. Every thread of the instance is given the same `threads` and `origin`, the
+ * monotonic clock's zero. Returns the exit code when the module ends: `_start` returned, or `proc_exit` on
+ * this thread. Returns undefined when a spawned thread returns, which ends that thread alone. A trap throws.
+ */
+export function runThread(module: WebAssembly.Module, input: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void, threads: Threads, origin: number, thread?: { tid: number; arg: number }): number | undefined {
+  const wasi = wasiImports(input, args, write, undefined, origin);
+  const instance = new WebAssembly.Instance(module, wasi.importsFor(module, threads));
+  wasi.setMemory(threads.memory);
+  try {
+    if (!thread) {
+      (instance.exports._start as () => void)();
+      return 0;
+    }
+    (instance.exports.wasi_thread_start as (tid: number, arg: number) => void)(thread.tid, thread.arg);
+    return undefined;
+  } catch (e) {
+    if (e instanceof Exit) return e.code;
+    throw e;
+  }
+}
+
+/** a thread id for thread-spawn from the counter at slot 0 of `ids`, shared by every thread; 0 once they run out */
+export function nextThreadId(ids: Int32Array): number {
+  const tid = Atomics.add(ids, 0, 1) + 1;
+  // wasi-threads' ids are positive and below 2^29
+  return tid < 1 << 29 ? tid : 0;
+}
+
+/**
  * Runs one instance of a compiled WASI build to its end on a thread that also
  * delivers its input: push the input into `input` from that thread's event loop.
  * Resolves to the exit code. It needs canSuspend().

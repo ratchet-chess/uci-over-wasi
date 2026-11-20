@@ -10,8 +10,9 @@
 #include <pthread.h>
 #include <stdatomic.h>
 static int threads = 1;
-static atomic_int stopping;
-static void *spin(void *arg) { volatile unsigned long n = 0; while (!atomic_load(&stopping)) n++; return arg; }
+static atomic_int stopping, running;
+/* a helper counts itself in, so the search reports the threads that ran during it */
+static void *spin(void *arg) { atomic_fetch_add(&running, 1); volatile unsigned long n = 0; while (!atomic_load(&stopping)) n++; return arg; }
 #endif
 static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 int main(void) {
@@ -34,6 +35,7 @@ int main(void) {
             pthread_t helpers[4];
             int started = 0;
             atomic_store(&stopping, 0);
+            atomic_store(&running, 0);
             while (started < threads - 1 && !pthread_create(&helpers[started], NULL, spin, NULL)) started++;
 #endif
             while (!stop && (infinite || ponder || now() < end)) {
@@ -43,9 +45,10 @@ int main(void) {
                 if (h & UCI_PONDERHIT) ponder = 0, end = now() + 500;
             }
 #ifdef _REENTRANT
+            int ran = atomic_load(&running);
             atomic_store(&stopping, 1);
             for (int i = 0; i < started; i++) pthread_join(helpers[i], NULL);
-            printf("info string searched on %d threads\n", started + 1);
+            printf("info string searched on %d threads\n", ran + 1);
 #endif
             puts(black ? "bestmove e7e5" : "bestmove e2e4");
         }
