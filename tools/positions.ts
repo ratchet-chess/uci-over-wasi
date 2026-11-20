@@ -7,7 +7,7 @@
  *   bun tools/positions.ts <positions.txt> "<go arguments>" <engine command...>
  *
  * Each line of the file is what follows `position`, such as `fen <FEN>` or `startpos moves e2e4`. For each one it
- * sends `position`, waits for `readyok`, sends `go` with the arguments, and reads to `bestmove`. It prints one row
+ * sends `uci` and `position`, waits for `readyok`, sends `go` with the arguments, and reads to `bestmove`. It prints one row
  * per position, the last `info` line's node count and the move, then the total. Two builds that play the same
  * search print the same text. A search that prints no node count fails the run, because its row would compare
  * the move alone.
@@ -50,7 +50,8 @@ function search(position: string): Promise<{ nodes: number; move: string }> {
       else resolve({ nodes, move });
     });
     engine.stdin.on("error", () => {});
-    engine.stdin.write(`position ${position}\nisready\n`);
+    // a module may expect `uci` first (docs/uci-over-wasi.md § What a module does with each line)
+    engine.stdin.write(`uci\nposition ${position}\nisready\n`);
   });
 }
 

@@ -3,6 +3,7 @@ url=https://github.com/bmdanielsson/marvin-chess
 commit=e87a148d611ddc3fcbcf0c7a0d16d6d0e76a5161
 license=GPL-3.0-or-later
 module=marvin.wasm
-compare=bench
-nodes=126715227
-bench_args=-b
+# Its bench searches to a depth fixed in its source, for half an hour over the check's three runs, so the
+# check compares a shorter search over positions.txt.
+compare=positions
+go="depth 15"
