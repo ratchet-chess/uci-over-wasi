@@ -59,7 +59,7 @@ pub const PONDERHIT: u32 = 4;
 // WASI preview 1 (WebAssembly/WASI, legacy/preview1/docs.md): a subscription is 48
 // bytes, its tag at 8 and its union at 16; an event is 32 bytes, its type at 10.
 #[link(wasm_import_module = "wasi_snapshot_preview1")]
-extern "C" {
+unsafe extern "C" {
     fn fd_read(fd: u32, iovs: *const [u32; 2], iovs_len: u32, nread: *mut u32) -> u16;
     fn poll_oneoff(subs: *const u8, events: *mut u8, n: u32, nevents: *mut u32) -> u16;
 }
