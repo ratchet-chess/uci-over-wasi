@@ -21,8 +21,8 @@ where, ask the user.
 - `docs/uci-over-wasi.md`: the spec. Part 1 is for a module's author, Part 2 for a host's author, and Part 3 describes the reference host.
 - `docs/wasm-limits.md`: what the WebAssembly target limits.
 - `helper/`: the poll helper, one file per language, its how-to, and `echo.c`, the smallest module on it.
-- `host/wasi/`: the reference host: under Bun and Node (`main.ts`, `thread.ts`), in a page (`browser.ts`), and the WASI calls both answer (`wasi.ts`).
-- `tools/wasi-check.ts`: the checker. `tools/wasm-features.ts` reads the features a module uses, for its declaration check.
+- `host/wasi/`: the reference host: under Bun and Node (`main.ts`, `thread.ts`), in a page (`browser.ts`), the WASI calls both answer (`wasi.ts`), the feature decoder (`features.ts`), and the shared checker (`check.ts`, `check-browser.ts`, `check-worker.ts`).
+- `tools/wasi-check.ts`: the CLI driver for `host/wasi/check.ts`. `tools/wasm-features.ts` prints `host/wasi/features.ts`.
 - `tools/adapted.sh`: fetches, builds, compares and checks one adapted engine. Its header states the form of a folder of `adapted/`.
 - `tools/positions.ts`: a build's moves and node counts over a position file.
 - `tools/toolchains.sh` and `tools/toolchains.txt`: the pinned toolchains.

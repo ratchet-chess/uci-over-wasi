@@ -92,7 +92,7 @@ function lineWriter(afterUciok = false): (fd: number, bytes: Uint8Array) => void
   };
 }
 
-const script = scope.location.href.split("#")[0];
+const script = scope.location.href.split("#")[0]!;
 const build = new URL(scope.location.hash.slice(1) || script.replace(/\.js$/, ".wasm"), script);
 const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
 

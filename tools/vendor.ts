@@ -15,12 +15,13 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const HOST = ["wasi.ts", "main.ts", "thread.ts", "browser.ts"];
+const DEFAULT = ["wasi.ts", "main.ts", "thread.ts", "browser.ts"];
+const AVAILABLE = [...DEFAULT, "features.ts", "check.ts", "check-browser.ts", "check-worker.ts"];
 const root = join(import.meta.dirname, "..");
 const [folder, ...named] = process.argv.slice(2);
-const files = named.length ? named : HOST;
-if (!folder || files.some((f) => !HOST.includes(f))) {
-  console.error(`usage: bun tools/vendor.ts <folder> [file...]   files: ${HOST.join(", ")}`);
+const files = named.length ? named : DEFAULT;
+if (!folder || files.some((f) => !AVAILABLE.includes(f))) {
+  console.error(`usage: bun tools/vendor.ts <folder> [file...]   files: ${AVAILABLE.join(", ")}`);
   process.exit(2);
 }
 const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();

@@ -48,7 +48,7 @@ const SECTION = "uci_over_wasi";
 function leb(wasm: Uint8Array, at: number): [number, number] {
   let value = 0;
   for (let shift = 0; ; shift += 7) {
-    const b = wasm[at++];
+    const b = wasm[at++]!;
     value += (b & 0x7f) * 2 ** shift;
     if (b < 0x80) return [value, at];
   }
@@ -153,7 +153,7 @@ export function sharedMemory(wasm: Uint8Array): WebAssembly.Memory | undefined {
         else if (kind === 1 || kind === 2) {
           // a table's element type, then the limits: flags, the initial size and, with flag 1, the maximum
           if (kind === 1) p++;
-          const flags = wasm[p++];
+          const flags = wasm[p++]!;
           let initial: number;
           let maximum: number | undefined;
           [initial, p] = leb(wasm, p);
@@ -318,7 +318,7 @@ export class Queue implements Input {
   read(out: Uint8Array, at: number, max: number): number {
     let n = 0;
     while (n < max && this.chunks.length > 0) {
-      const c = this.chunks[0];
+      const c = this.chunks[0]!;
       const take = Math.min(max - n, c.length);
       out.set(c.subarray(0, take), at + n);
       n += take;
@@ -351,7 +351,7 @@ export class Ring implements Input {
   push(bytes: Uint8Array): void {
     const w = Atomics.load(this.head, WRITTEN);
     if (w - Atomics.load(this.head, READ) + bytes.length > RING_BYTES) throw new Error("the engine's input ring is full");
-    for (let i = 0; i < bytes.length; i++) this.data[(w + i) & (RING_BYTES - 1)] = bytes[i];
+    for (let i = 0; i < bytes.length; i++) this.data[(w + i) & (RING_BYTES - 1)] = bytes[i]!;
     Atomics.store(this.head, WRITTEN, (w + bytes.length) | 0);
     Atomics.notify(this.head, WRITTEN);
   }
@@ -383,7 +383,7 @@ export class Ring implements Input {
   read(out: Uint8Array, at: number, max: number): number {
     const r = Atomics.load(this.head, READ);
     const n = Math.min(max, this.available());
-    for (let i = 0; i < n; i++) out[at + i] = this.data[(r + i) & (RING_BYTES - 1)];
+    for (let i = 0; i < n; i++) out[at + i] = this.data[(r + i) & (RING_BYTES - 1)]!;
     Atomics.store(this.head, READ, (r + n) | 0);
     return n;
   }
