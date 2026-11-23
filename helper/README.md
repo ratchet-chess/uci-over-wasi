@@ -60,7 +60,8 @@ return before it. Each file's header has the rules in full.
   thread's stack.
 - **`setjmp` and `longjmp`** in C need `-mllvm -wasm-enable-sjlj -mexception-handling`, and `-lsetjmp` at
   the link. The module then uses WebAssembly exception handling, and declares `requires=exception-handling`
-  (§ The declaration).
+  (§ The declaration). The pinned wasi-sdk emits the legacy form, `try` and `catch`, which every browser has.
+  `-mllvm -wasm-use-legacy-eh=false` emits the exnref form, `try_table`, which Safari has only from 18.4.
 - **C++ exceptions.** Build with `-fno-exceptions` where the engine throws nothing.
 - **Memory never shrinks.** Free the old hash table before allocating its replacement. In Go, also
   run the collector first.

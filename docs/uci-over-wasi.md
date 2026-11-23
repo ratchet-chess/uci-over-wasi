@@ -414,6 +414,9 @@ A page is cross-origin isolated when its server sends `Cross-Origin-Opener-Polic
 `Cross-Origin-Embedder-Policy: require-corp`. The first two ways give a page the same engine: the hash
 table is kept, and `stop`, `isready` and `ponderhit` reach a running search.
 
+Chrome from 137, Firefox from 153 and Safari from 27 have JavaScript Promise Integration. So a page that is not
+cross-origin isolated falls to the degraded mode only in an older browser.
+
 The degraded mode is the last resort. No line reaches a running module there, and a module that waits in
 `fd_read` holds the Worker's only thread. So the Worker keeps the session itself, and runs every module
 as a deaf one (§ A deaf module):

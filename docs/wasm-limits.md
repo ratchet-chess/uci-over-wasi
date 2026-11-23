@@ -85,6 +85,13 @@ A native executable removes one of these limits, outside a browser. A C compiler
 there, so it searches faster than under a runtime. It keeps every other limit, because it is the same
 module. Ratchet makes one only from its own modules (`docs/uci-over-wasi.md` § As a native executable).
 
+**Memory64 would lift the 4 GiB limit, and a module does not use it.** Memory64 gives a module 64-bit
+addresses. Chrome from 133, Firefox from 134 and Node from 24 have it on. Safari 27.3, in beta on 2026-11-20, adds it; no
+released Safari has it. A module stays 32-bit (`docs/uci-over-wasi.md` § Form). Memory64 also costs speed. A
+runtime removes most bounds checks on a 32-bit memory with guard pages. On a 64-bit memory it checks each
+access, so the same code runs slower (SpiderMonkey's blog, "Is Memory64 actually worth using?", 2025-01-15).
+A hash table above 4 GiB is the one gain, and a browser rarely gives a page that much.
+
 ## Limits that an edit removes
 
 Each row is an edit that adapts an engine. An engine written for the target starts in the right-hand form.
