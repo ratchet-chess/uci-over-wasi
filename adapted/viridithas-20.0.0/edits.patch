@@ -1,0 +1,659 @@
+diff --git a/src/main.rs b/src/main.rs
+index 1f156ae..58636ee 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -39,6 +39,9 @@ mod transpositiontable;
+ mod uci;
+ mod util;
+ 
++#[cfg(target_os = "wasi")] // UCI over WASI: the poll helper, copied in by the build
++mod uci_wasi;
++
+ #[cfg(feature = "datagen")]
+ use cli::Subcommands::{Analyse, CountPositions, Datagen, Relabel, Rescale, Splat};
+ use cli::Subcommands::{
+diff --git a/src/nnue/geometry.rs b/src/nnue/geometry.rs
+index faae968..7ec3d04 100644
+--- a/src/nnue/geometry.rs
++++ b/src/nnue/geometry.rs
+@@ -6,9 +6,149 @@ mod vbmi;
+ #[cfg(target_feature = "avx512vbmi")]
+ pub use vbmi::*;
+ 
+-#[cfg(not(any(target_feature = "neon", target_feature = "avx512vbmi")))]
++// UCI over WASI: portable 64-byte ray geometry in place of x86_64 AVX2 intrinsics.
++#[cfg(target_os = "wasi")]
++mod wasi {
++    use crate::{
++        chess::{piece::Piece, types::Square},
++        nnue::geometry::Bit,
++    };
++
++    use super::{BitRays, INCOMING_SLIDERS_MASK, INCOMING_THREATS_MASK, PERMUTATION, PIECE_TO_BIT};
++
++    #[derive(Clone, Copy)]
++    #[repr(transparent)]
++    pub struct Vector {
++        pub raw: [u8; 64],
++    }
++
++    impl Vector {
++        #[expect(unused)]
++        pub fn flip(self) -> Self {
++            let mut raw = [0; 64];
++            raw[..32].copy_from_slice(&self.raw[32..]);
++            raw[32..].copy_from_slice(&self.raw[..32]);
++            Self { raw }
++        }
++
++        fn to_mask(&self) -> u64 {
++            let mut out = 0u64;
++            for (idx, &byte) in self.raw.iter().enumerate() {
++                if byte != 0 {
++                    out |= 1u64 << idx;
++                }
++            }
++            out
++        }
++
++        unsafe fn load(ptr: *const u8) -> Self {
++            let mut raw = [0; 64];
++            // SAFETY: callers pass 64-byte mailbox or constant tables.
++            unsafe { std::ptr::copy_nonoverlapping(ptr, raw.as_mut_ptr(), 64) };
++            Self { raw }
++        }
++    }
++
++    pub struct Permutation {
++        pub indexes: Vector,
++        pub valid: Vector,
++    }
++
++    pub fn permutation_for(focus: Square) -> Permutation {
++        let indexes = Vector {
++            raw: PERMUTATION[focus.index()],
++        };
++        let mut valid = [0; 64];
++        for (dst, &index) in valid.iter_mut().zip(indexes.raw.iter()) {
++            *dst = if index & 0x80 == 0 { 0xFF } else { 0 };
++        }
++        Permutation {
++            indexes,
++            valid: Vector { raw: valid },
++        }
++    }
++
++    fn permute_mailbox_inner(permutation: &Permutation, mailbox: &Vector) -> (Vector, Vector) {
++        let mut permuted = [0; 64];
++        let mut bits = [0; 64];
++        for idx in 0..64 {
++            if permutation.valid.raw[idx] != 0 {
++                let src = usize::from(permutation.indexes.raw[idx]);
++                let piece = mailbox.raw[src];
++                permuted[idx] = piece;
++                bits[idx] = PIECE_TO_BIT.get(usize::from(piece)).map_or(0, |b| b.0);
++            }
++        }
++        (Vector { raw: permuted }, Vector { raw: bits })
++    }
++
++    pub fn permute_mailbox(
++        permutation: &Permutation,
++        mailbox: &[Option<Piece>; 64],
++    ) -> (Vector, Vector) {
++        // SAFETY: [Option<Piece>; 64] has layout [u8; 64].
++        let mb = unsafe { Vector::load(mailbox.as_ptr().cast::<u8>()) };
++        permute_mailbox_inner(permutation, &mb)
++    }
++
++    pub fn permute_mailbox_ignoring(
++        permutation: &Permutation,
++        mailbox: &[Option<Piece>; 64],
++        ignore: Square,
++    ) -> (Vector, Vector) {
++        // SAFETY: Option<Piece> is niche-optimised to 1 byte.
++        const NO_PIECE: u8 = unsafe { std::mem::transmute::<Option<Piece>, u8>(None) };
++        // SAFETY: [Option<Piece>; 64] has layout [u8; 64].
++        let mut mb = unsafe { Vector::load(mailbox.as_ptr().cast::<u8>()) };
++        mb.raw[usize::from(ignore.inner())] = NO_PIECE;
++        permute_mailbox_inner(permutation, &mb)
++    }
++
++    pub fn closest_occupied(bits: Vector) -> BitRays {
++        let occupied = bits.to_mask();
++        let o = occupied | 0x8181_8181_8181_8181;
++        BitRays((o ^ o.wrapping_sub(0x0303_0303_0303_0303)) & occupied)
++    }
++
++    pub fn incoming_attackers(bits: Vector, closest: BitRays) -> BitRays {
++        let mut raw = [0; 64];
++        for (idx, dst) in raw.iter_mut().enumerate() {
++            *dst = if bits.raw[idx] & INCOMING_THREATS_MASK[idx].0 != 0 {
++                0xFF
++            } else {
++                0
++            };
++        }
++        BitRays(Vector { raw }.to_mask()) & closest
++    }
++
++    pub fn incoming_sliders(bits: Vector, closest: BitRays) -> BitRays {
++        let mut raw = [0; 64];
++        for (idx, dst) in raw.iter_mut().enumerate() {
++            *dst = if bits.raw[idx] & INCOMING_SLIDERS_MASK[idx].0 != 0 {
++                0xFF
++            } else {
++                0
++            };
++        }
++        BitRays(Vector { raw }.to_mask()) & closest & BitRays::NON_KNIGHT
++    }
++
++    pub fn test_bit(bits: Vector, bit: Bit) -> BitRays {
++        let mut raw = [0; 64];
++        for (idx, dst) in raw.iter_mut().enumerate() {
++            *dst = if bits.raw[idx] & bit.0 != 0 { 0xFF } else { 0 };
++        }
++        BitRays(Vector { raw }.to_mask())
++    }
++}
++
++#[cfg(target_os = "wasi")]
++pub use wasi::*;
++
++#[cfg(not(any(target_os = "wasi", target_feature = "neon", target_feature = "avx512vbmi")))]
+ mod avx2;
+-#[cfg(not(any(target_feature = "neon", target_feature = "avx512vbmi")))]
++#[cfg(not(any(target_os = "wasi", target_feature = "neon", target_feature = "avx512vbmi")))]
+ pub use avx2::*;
+ 
+ #[cfg(target_feature = "neon")]
+diff --git a/src/nnue/network.rs b/src/nnue/network.rs
+index 642d76a..f2349d5 100644
+--- a/src/nnue/network.rs
++++ b/src/nnue/network.rs
+@@ -814,6 +814,34 @@ impl NNUEParams {
+         }
+ 
+         let _guard = LOCK.lock().unwrap();
++        // UCI over WASI: no file system, so decompress the embedded net in memory and cache it.
++        #[cfg(target_os = "wasi")]
++        {
++            static CACHED_WASI: OnceLock<&'static NNUEParams> = OnceLock::new();
++            if let Some(cached) = CACHED_WASI.get() {
++                return Ok(*cached);
++            }
++            let mut net = QuantisedNetwork::zeroed();
++            // SAFETY: QuantisedNetwork is POD and we only write to its bytes.
++            let mut mem = unsafe {
++                std::slice::from_raw_parts_mut(
++                    std::ptr::from_mut(net.as_mut()).cast::<u8>(),
++                    size_of::<QuantisedNetwork>(),
++                )
++            };
++            let expected_bytes = mem.len() as u64;
++            let mut decoder = ZstdDecoder::new(EMBEDDED_NNUE)
++                .with_context(|| "Failed to construct zstd decoder for NNUE weights.")?;
++            let bytes_written = std::io::copy(&mut decoder, &mut mem)
++                .with_context(|| "Failed to decompress NNUE weights.")?;
++            anyhow::ensure!(
++                bytes_written == expected_bytes,
++                "encountered issue while decompressing NNUE weights, expected {expected_bytes} bytes, but got {bytes_written}"
++            );
++            let params: &'static NNUEParams = Box::leak(net.permute(true));
++            let _ = CACHED_WASI.set(params);
++            return Ok(params);
++        }
+         // check if we've already loaded the weights
+         if let Some(cached) = CACHED.get() {
+             // cast the mmap to a NNUEParams
+diff --git a/src/nnue/simd.rs b/src/nnue/simd.rs
+index 2c23521..d9d3647 100644
+--- a/src/nnue/simd.rs
++++ b/src/nnue/simd.rs
+@@ -408,7 +408,237 @@ mod avx512 {
+     pub const F32_CHUNK: usize = std::mem::size_of::<VecF32>() / std::mem::size_of::<f32>();
+ }
+ 
+-#[cfg(not(any(target_feature = "neon", target_feature = "avx512f")))]
++// UCI over WASI: 128-bit WebAssembly SIMD backend matching NEON chunk widths and exact AVX2/NEON float FMA and reduction order.
++#[cfg(target_os = "wasi")]
++mod wasm {
++    use std::arch::wasm32::*;
++
++    #[cfg(target_feature = "relaxed-simd")]
++    pub const INNER_ARCH: &str = "wasm-relaxed-simd128";
++    #[cfg(not(target_feature = "relaxed-simd"))]
++    pub const INNER_ARCH: &str = "wasm-simd128";
++
++    wrap_simd_register!(v128, i8, VecI8);
++    wrap_simd_register!(v128, i16, VecI16);
++    wrap_simd_register!(v128, i32, VecI32);
++    wrap_simd_register!(v128, i64, VecI64);
++    wrap_simd_register!(v128, f32, VecF32);
++    wrap_simd_register!(v128, u16, Vec128U16);
++
++    #[inline(always)]
++    pub unsafe fn zero_i16() -> VecI16 {
++        VecI16::from_raw(i16x8_splat(0))
++    }
++    #[inline(always)]
++    pub unsafe fn zero_i32() -> VecI32 {
++        VecI32::from_raw(i32x4_splat(0))
++    }
++    #[inline(always)]
++    pub unsafe fn splat_i16(n: i16) -> VecI16 {
++        VecI16::from_raw(i16x8_splat(n))
++    }
++    #[inline(always)]
++    pub unsafe fn splat_i32(n: i32) -> VecI32 {
++        VecI32::from_raw(i32x4_splat(n))
++    }
++    #[inline(always)]
++    pub unsafe fn load_i8(src: *const i8) -> VecI8 {
++        unsafe { VecI8::from_raw(std::arch::wasm32::v128_load(src.cast())) }
++    }
++    #[inline(always)]
++    pub unsafe fn store_i8(dst: *mut i8, vec: VecI8) {
++        unsafe { std::arch::wasm32::v128_store(dst.cast(), vec.inner()) }
++    }
++    #[inline(always)]
++    pub unsafe fn load_u8(src: *const u8) -> VecI8 {
++        unsafe { VecI8::from_raw(std::arch::wasm32::v128_load(src.cast())) }
++    }
++    #[inline(always)]
++    pub unsafe fn store_u8(dst: *mut u8, vec: VecI8) {
++        unsafe { std::arch::wasm32::v128_store(dst.cast(), vec.inner()) }
++    }
++    #[inline(always)]
++    pub unsafe fn load_i16(src: *const i16) -> VecI16 {
++        unsafe { VecI16::from_raw(std::arch::wasm32::v128_load(src.cast())) }
++    }
++    #[inline(always)]
++    pub unsafe fn store_i16(dst: *mut i16, vec: VecI16) {
++        unsafe { std::arch::wasm32::v128_store(dst.cast(), vec.inner()) }
++    }
++    #[inline(always)]
++    pub unsafe fn load_i32(src: *const i32) -> VecI32 {
++        unsafe { VecI32::from_raw(std::arch::wasm32::v128_load(src.cast())) }
++    }
++    #[inline(always)]
++    pub unsafe fn store_i32(dst: *mut i32, vec: VecI32) {
++        unsafe { std::arch::wasm32::v128_store(dst.cast(), vec.inner()) }
++    }
++    #[inline(always)]
++    pub unsafe fn store_u32(dst: *mut u32, vec: VecI32) {
++        unsafe { std::arch::wasm32::v128_store(dst.cast(), vec.inner()) }
++    }
++    #[inline(always)]
++    pub unsafe fn max_i16(a: VecI16, b: VecI16) -> VecI16 {
++        VecI16::from_raw(i16x8_max(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn min_i16(a: VecI16, b: VecI16) -> VecI16 {
++        VecI16::from_raw(i16x8_min(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn add_i16(a: VecI16, b: VecI16) -> VecI16 {
++        VecI16::from_raw(i16x8_add(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn sub_i16(a: VecI16, b: VecI16) -> VecI16 {
++        VecI16::from_raw(i16x8_sub(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn add_i32(a: VecI32, b: VecI32) -> VecI32 {
++        VecI32::from_raw(i32x4_add(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn mul_high_i16(a: VecI16, b: VecI16) -> VecI16 {
++        let lo = i32x4_shr(i32x4_extmul_low_i16x8(a.inner(), b.inner()), 16);
++        let hi = i32x4_shr(i32x4_extmul_high_i16x8(a.inner(), b.inner()), 16);
++        VecI16::from_raw(i16x8_narrow_i32x4(lo, hi))
++    }
++    pub type S = u32;
++    #[inline(always)]
++    pub unsafe fn shl_i16<const SHIFT: u32>(vec: VecI16) -> VecI16 {
++        VecI16::from_raw(i16x8_shl(vec.inner(), SHIFT))
++    }
++    #[inline(always)]
++    pub unsafe fn shift_mul_high_i16<const SHIFT: u32>(a: VecI16, b: VecI16) -> VecI16 {
++        unsafe { mul_high_i16(shl_i16::<SHIFT>(a), b) }
++    }
++    #[inline(always)]
++    pub unsafe fn nonzero_mask_i32(vec: VecI32) -> u16 {
++        i32x4_bitmask(i32x4_ne(vec.inner(), i32x4_splat(0))) as u16
++    }
++    #[inline(always)]
++    pub unsafe fn pack_i16_to_u8(a: VecI16, b: VecI16) -> VecI8 {
++        VecI8::from_raw(u8x16_narrow_i16x8(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    #[cfg(target_feature = "relaxed-simd")]
++    pub unsafe fn madd_u8_to_i32(sum: VecI32, a: VecI8, b: VecI8) -> VecI32 {
++        // Activations `a` are in [0, 127] (QA=255, FT_SHIFT=9 => 255*255>>9 = 127), so i7x16 dot is exact.
++        VecI32::from_raw(i32x4_relaxed_dot_i8x16_i7x16_add(b.inner(), a.inner(), sum.inner()))
++    }
++    #[inline(always)]
++    #[cfg(not(target_feature = "relaxed-simd"))]
++    pub unsafe fn madd_u8_to_i32(sum: VecI32, a: VecI8, b: VecI8) -> VecI32 {
++        let lo = i32x4_dot_i16x8(i16x8_extend_low_u8x16(a.inner()), i16x8_extend_low_i8x16(b.inner()));
++        let hi = i32x4_dot_i16x8(i16x8_extend_high_u8x16(a.inner()), i16x8_extend_high_i8x16(b.inner()));
++        let even = i32x4_shuffle::<0, 2, 4, 6>(lo, hi);
++        let odd = i32x4_shuffle::<1, 3, 5, 7>(lo, hi);
++        VecI32::from_raw(i32x4_add(sum.inner(), i32x4_add(even, odd)))
++    }
++    #[inline(always)]
++    pub unsafe fn madd_2xu8_to_i32(sum: VecI32, a: VecI8, b: VecI8, c: VecI8, d: VecI8) -> VecI32 {
++        unsafe {
++            let sum = madd_u8_to_i32(sum, a, b);
++            madd_u8_to_i32(sum, c, d)
++        }
++    }
++    #[inline(always)]
++    pub unsafe fn i32_to_f32(vec: VecI32) -> VecF32 {
++        VecF32::from_raw(f32x4_convert_i32x4(vec.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn zero_f32() -> VecF32 {
++        VecF32::from_raw(f32x4_splat(0.0))
++    }
++    #[inline(always)]
++    pub unsafe fn splat_f32(n: f32) -> VecF32 {
++        VecF32::from_raw(f32x4_splat(n))
++    }
++    #[inline(always)]
++    pub unsafe fn load_f32(src: *const f32) -> VecF32 {
++        unsafe { VecF32::from_raw(std::arch::wasm32::v128_load(src.cast())) }
++    }
++    #[inline(always)]
++    pub unsafe fn store_f32(dst: *mut f32, vec: VecF32) {
++        unsafe { std::arch::wasm32::v128_store(dst.cast(), vec.inner()) }
++    }
++    #[inline(always)]
++    pub unsafe fn add_f32(a: VecF32, b: VecF32) -> VecF32 {
++        VecF32::from_raw(f32x4_add(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn mul_f32(a: VecF32, b: VecF32) -> VecF32 {
++        VecF32::from_raw(f32x4_mul(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn div_f32(a: VecF32, b: VecF32) -> VecF32 {
++        VecF32::from_raw(f32x4_div(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn max_f32(a: VecF32, b: VecF32) -> VecF32 {
++        VecF32::from_raw(f32x4_max(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn min_f32(a: VecF32, b: VecF32) -> VecF32 {
++        VecF32::from_raw(f32x4_min(a.inner(), b.inner()))
++    }
++    #[inline(always)]
++    pub unsafe fn madd_f32(a: VecF32, b: VecF32, c: VecF32) -> VecF32 {
++        // Exact single-rounding IEEE 754 FMA per lane, matching native AVX2/NEON.
++        let (a, b, c) = (a.inner(), b.inner(), c.inner());
++        VecF32::from_raw(f32x4(
++            f32x4_extract_lane::<0>(a).mul_add(f32x4_extract_lane::<0>(b), f32x4_extract_lane::<0>(c)),
++            f32x4_extract_lane::<1>(a).mul_add(f32x4_extract_lane::<1>(b), f32x4_extract_lane::<1>(c)),
++            f32x4_extract_lane::<2>(a).mul_add(f32x4_extract_lane::<2>(b), f32x4_extract_lane::<2>(c)),
++            f32x4_extract_lane::<3>(a).mul_add(f32x4_extract_lane::<3>(b), f32x4_extract_lane::<3>(c)),
++        ))
++    }
++    #[inline(always)]
++    pub unsafe fn sum_f32(vec: VecF32) -> f32 {
++        let v = vec.inner();
++        (f32x4_extract_lane::<0>(v) + f32x4_extract_lane::<2>(v))
++            + (f32x4_extract_lane::<1>(v) + f32x4_extract_lane::<3>(v))
++    }
++    #[inline(always)]
++    pub unsafe fn reduce_add_f32s(vec: &[VecF32; 4]) -> f32 {
++        let vec_a = f32x4_add(vec[0].inner(), vec[2].inner());
++        let vec_b = f32x4_add(vec[1].inner(), vec[3].inner());
++        unsafe { sum_f32(VecF32::from_raw(f32x4_add(vec_a, vec_b))) }
++    }
++    #[inline(always)]
++    pub unsafe fn load_extend_i8(src: *const i8) -> VecI16 {
++        unsafe { VecI16::from_raw(i16x8_extend_low_i8x16(v128_load64_zero(src.cast()))) }
++    }
++    #[inline(always)]
++    pub unsafe fn v128_zero() -> Vec128U16 {
++        Vec128U16::from_raw(u16x8_splat(0))
++    }
++    #[inline(always)]
++    pub unsafe fn v128_splat(n: u16) -> Vec128U16 {
++        Vec128U16::from_raw(u16x8_splat(n))
++    }
++    #[inline(always)]
++    pub unsafe fn v128_load(src: *const u16) -> Vec128U16 {
++        unsafe { Vec128U16::from_raw(std::arch::wasm32::v128_load(src.cast())) }
++    }
++    #[inline(always)]
++    pub unsafe fn v128_store(dst: *mut u16, vec: Vec128U16) {
++        unsafe { std::arch::wasm32::v128_store(dst.cast(), vec.inner()) }
++    }
++    #[inline(always)]
++    pub unsafe fn v128_add(a: Vec128U16, b: Vec128U16) -> Vec128U16 {
++        Vec128U16::from_raw(u16x8_add(a.inner(), b.inner()))
++    }
++
++    pub const U8_CHUNK: usize = std::mem::size_of::<VecI8>() / std::mem::size_of::<u8>();
++    pub const I8_CHUNK_I32: usize = std::mem::size_of::<i32>() / std::mem::size_of::<u8>();
++    pub const I8_CHUNK: usize = std::mem::size_of::<VecI8>() / std::mem::size_of::<i8>();
++    pub const I16_CHUNK: usize = std::mem::size_of::<VecI16>() / std::mem::size_of::<i16>();
++    pub const I32_CHUNK: usize = std::mem::size_of::<VecI32>() / std::mem::size_of::<i32>();
++    pub const F32_CHUNK: usize = std::mem::size_of::<VecF32>() / std::mem::size_of::<f32>();
++}
++
++#[cfg(not(any(target_os = "wasi", target_feature = "neon", target_feature = "avx512f")))]
+ mod avx2 {
+     #![allow(non_camel_case_types)]
+     use std::arch::x86_64::*;
+@@ -1163,7 +1393,10 @@ mod neon {
+ #[cfg(target_feature = "avx512f")]
+ pub use avx512::*;
+ 
+-#[cfg(not(any(target_feature = "neon", target_feature = "avx512f")))]
++#[cfg(target_os = "wasi")]
++pub use wasm::*;
++
++#[cfg(not(any(target_os = "wasi", target_feature = "neon", target_feature = "avx512f")))]
+ pub use avx2::*;
+ 
+ #[cfg(target_feature = "neon")]
+diff --git a/src/searchinfo.rs b/src/searchinfo.rs
+index 0c9f430..60ad184 100644
+--- a/src/searchinfo.rs
++++ b/src/searchinfo.rs
+@@ -150,6 +150,29 @@ impl<'a> SearchInfo<'a> {
+             return true;
+         }
+         let res = self.clock.check_up(self.stopped, self.nodes.get_global());
++        // UCI over WASI: the search runs on the UCI thread and polls stdin here.
++        #[cfg(target_os = "wasi")]
++        {
++            let unbounded = matches!(
++                self.clock.limit(),
++                crate::timemgmt::SearchLimit::Infinite
++                    | crate::timemgmt::SearchLimit::Pondering { .. }
++            );
++            let heard = crate::uci_wasi::poll(unbounded);
++            if heard & crate::uci_wasi::PONDERHIT != 0 {
++                let unpondering_limit = self.clock.limit().clone().from_pondering();
++                self.clock.set_limit(unpondering_limit);
++                self.clock.start();
++                return self.clock.check_up(self.stopped, self.nodes.get_global());
++            }
++            if heard & crate::uci_wasi::STOP != 0 {
++                self.stopped.store(true, Ordering::SeqCst);
++                if heard & crate::uci_wasi::QUIT != 0 {
++                    self.control.quit.store(true, Ordering::SeqCst);
++                }
++                return true;
++            }
++        }
+         if let Some(Ok(cmd)) = self.stdin_rx.map(|m| m.lock().unwrap().try_recv()) {
+             let cmd = cmd.trim();
+             if cmd == "ponderhit" {
+diff --git a/src/threadpool.rs b/src/threadpool.rs
+index c4a1398..1fecbbe 100644
+--- a/src/threadpool.rs
++++ b/src/threadpool.rs
+@@ -1,3 +1,64 @@
++// UCI over WASI: single-threaded pool that runs scoped tasks inline on the calling thread.
++#[cfg(target_os = "wasi")]
++mod imp {
++    use std::thread::Scope;
++    use vec1::Vec1;
++
++    pub struct ReceiverHandle {
++        received: bool,
++    }
++
++    impl ReceiverHandle {
++        pub fn join(mut self) {
++            self.received = true;
++        }
++    }
++
++    impl Drop for ReceiverHandle {
++        fn drop(&mut self) {
++            assert!(
++                self.received,
++                "ReceiverHandle was dropped without receiving a value"
++            );
++        }
++    }
++
++    pub trait ScopeExt<'scope, 'env> {
++        fn spawn_into<F>(&'scope self, f: F, comms: &'scope WorkerThread) -> ReceiverHandle
++        where
++            F: FnOnce() + Send + 'scope;
++    }
++
++    impl<'scope, 'env> ScopeExt<'scope, 'env> for Scope<'scope, 'env> {
++        fn spawn_into<F>(&'scope self, f: F, _thread: &'scope WorkerThread) -> ReceiverHandle
++        where
++            F: FnOnce() + Send + 'scope,
++        {
++            f();
++            ReceiverHandle { received: true }
++        }
++    }
++
++    pub fn make_worker_threads(num_threads: usize) -> Vec1<WorkerThread> {
++        (0..num_threads.max(1))
++            .map(|_| WorkerThread)
++            .collect::<Vec<_>>()
++            .try_into()
++            .unwrap()
++    }
++
++    pub struct WorkerThread;
++
++    impl WorkerThread {
++        pub fn join(self) {}
++    }
++}
++
++#[cfg(target_os = "wasi")]
++pub use imp::*;
++
++#[cfg(not(target_os = "wasi"))]
++mod imp {
+ use std::sync::mpsc::{Receiver, SyncSender};
+ use std::sync::{Arc, Condvar, Mutex};
+ use std::thread::Scope;
+@@ -185,3 +246,7 @@ mod tests {
+         thread.join();
+     }
+ }
++}
++
++#[cfg(not(target_os = "wasi"))]
++pub use imp::*;
+diff --git a/src/uci.rs b/src/uci.rs
+index 45eefbd..b59809c 100644
+--- a/src/uci.rs
++++ b/src/uci.rs
+@@ -49,7 +49,14 @@ use crate::{
+ use crate::nnue::network::layers::{NNZ_COUNT, NNZ_DENOM};
+ 
+ const UCI_DEFAULT_HASH_MEGABYTES: usize = 16;
++// UCI over WASI: 32-bit address space (cap Hash at 1024 MB) and single thread.
++#[cfg(target_os = "wasi")]
++const UCI_MAX_HASH_MEGABYTES: usize = 1024;
++#[cfg(not(target_os = "wasi"))]
+ const UCI_MAX_HASH_MEGABYTES: usize = 1_048_576;
++#[cfg(target_os = "wasi")]
++const UCI_MAX_THREADS: usize = 1;
++#[cfg(not(target_os = "wasi"))]
+ const UCI_MAX_THREADS: usize = 512;
+ const BENCH_DEPTH: usize = 14;
+ const BENCH_THREADS: usize = 1;
+@@ -74,7 +81,9 @@ pub fn main_loop() -> Result<(), UciError> {
+     let nnue_params =
+         NNUEParams::decompress_and_alloc().map_err(|e| UciError::NnueInit(e.to_string()))?;
+ 
++    #[cfg(not(target_os = "wasi"))]
+     let (stdin, stdin_reader_handle) = stdin_reader(Arc::clone(&control))?;
++    #[cfg(not(target_os = "wasi"))]
+     let stdin = Mutex::new(stdin);
+     let stopped = AtomicBool::new(false);
+     let nodes = AtomicU64::new(0);
+@@ -90,10 +99,17 @@ pub fn main_loop() -> Result<(), UciError> {
+         &worker_threads,
+     )
+     .map_err(|e| UciError::NnueInit(e.to_string()))?;
++    #[cfg(not(target_os = "wasi"))]
+     thread_data[0].info.set_stdin(&stdin);
+ 
+     loop {
+         std::io::stdout().flush()?;
++        // UCI over WASI: the poll helper owns stdin, so std's reader never reads it.
++        #[cfg(target_os = "wasi")]
++        let Some(line) = crate::uci_wasi::getline() else {
++            break;
++        };
++        #[cfg(not(target_os = "wasi"))]
+         let Ok(line) = stdin
+             .lock()
+             .map_err(|_| UciError::Internal("failed to take lock on stdin"))?
+@@ -239,6 +255,7 @@ pub fn main_loop() -> Result<(), UciError> {
+                         for t in &mut thread_data {
+                             t.info.conf = conf.search_config.clone();
+                             t.info.lm_table = LMTable::new(&t.info.conf);
++                            #[cfg(not(target_os = "wasi"))]
+                             t.info.set_stdin(&stdin);
+                         }
+ 
+@@ -376,11 +393,14 @@ pub fn main_loop() -> Result<(), UciError> {
+             break;
+         }
+     }
+-    STDIN_READER_THREAD_KEEP_RUNNING.store(false, atomic::Ordering::SeqCst);
+-    if stdin_reader_handle.is_finished() {
+-        stdin_reader_handle
+-            .join()
+-            .map_err(|_| UciError::Thread("stdin reader thread panicked".to_string()))??;
++    #[cfg(not(target_os = "wasi"))]
++    {
++        STDIN_READER_THREAD_KEEP_RUNNING.store(false, atomic::Ordering::SeqCst);
++        if stdin_reader_handle.is_finished() {
++            stdin_reader_handle
++                .join()
++                .map_err(|_| UciError::Thread("stdin reader thread panicked".to_string()))??;
++        }
+     }
+ 
+     #[cfg(feature = "stats")]
+@@ -836,7 +856,7 @@ fn print_uci_response(info: &SearchInfo, full: bool) {
+     println!(
+         "option name Hash type spin default {UCI_DEFAULT_HASH_MEGABYTES} min 1 max {UCI_MAX_HASH_MEGABYTES}"
+     );
+-    println!("option name Threads type spin default 1 min 1 max 512");
++    println!("option name Threads type spin default 1 min 1 max {UCI_MAX_THREADS}");
+     println!("option name PrettyPrint type check default false");
+     println!("option name SyzygyPath type string default <empty>");
+     println!("option name SyzygyProbeLimit type spin default 7 min 0 max 7");

@@ -1,0 +1,7 @@
+# Viridithas 20.0.0, by Cosmo Bobak
+url=https://github.com/cosmobobak/viridithas
+commit=0631113e2215714c54d397cce9a8caebc5e6f8ee
+license=MIT
+module=viridithas.wasm
+compare=bench
+nodes=3749873
