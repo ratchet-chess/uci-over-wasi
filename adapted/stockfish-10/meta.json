@@ -1,0 +1,86 @@
+{
+  "date": "2018-11-29",
+  "year": 2018,
+  "originalAuthors": [
+    "Tord Romstad",
+    "Marco Costalba",
+    "Joona Kiiski",
+    "Gary Linscott",
+    "Stockfish contributors"
+  ],
+  "originalLanguage": "C++",
+  "upstreamTag": "sf_10",
+  "cpwPage": "Stockfish",
+  "blurb": "Stockfish 10 is the late-2018 classical release of the open-source Stockfish chess engine, originally forked from Glaurung 2.1 in 2008 and developed through Fishtest distributed SPRT testing. It pairs a tuned classical hand-crafted evaluation with aggressive late-move reductions, singular extensions, ProbCut, and continuation histories. Adapted to UCI over WASI from the pinned sf_10 commit and used as the default rating anchor in ratchet-ui.",
+  "results": [
+    {
+      "date": "2018-11",
+      "where": "CCRL Blitz (64-bit)",
+      "result": "3509 (default ratchet-ui anchor)",
+      "kind": "rating"
+    }
+  ],
+  "fidelityNotes": "No Syzygy tablebases (no filesystem in WASI); runs single-threaded unless the page is cross-origin isolated.",
+  "features": [
+    {
+      "key": "Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "Plain 64-bit magic bitboards for sliding-piece attack generation."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Null-window searches after the first move with full-window re-searches on fail-high."
+    },
+    {
+      "key": "Aspiration_Windows",
+      "label": "Aspiration Windows",
+      "group": "Search",
+      "implementation": "Narrow root window from depth 5 with asymmetric gradual widening on fail-high or fail-low."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Dynamic reduction scaled by depth and static eval margin over beta, with verification search at high depth."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Log-log reduction table adjusted by PV, improving flag, killer or TT status, and move history."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "TT-move exclusion search from depth 8 extending moves that stand clearly above all siblings."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Shallow reduced search on SEE-passing captures to prune clear beta cutoffs early."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Continuation History",
+      "group": "Ordering",
+      "implementation": "Gravity-updated butterfly table plus 1-, 2-, and 4-ply piece-to continuation histories."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Packed middlegame and endgame score pairs interpolated smoothly by remaining non-pawn phase."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Zone Attack",
+      "group": "Evaluation",
+      "implementation": "Weighted piece attacks, safe checks, and pawn shelter/storm terms combined nonlinearly into king danger."
+    }
+  ]
+}
