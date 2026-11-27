@@ -53,11 +53,10 @@ class BrowserRun extends CheckSession {
     this.worker.postMessage(msg);
   }
 
+  /** the worker's own threads end with it, so it is terminated even after an error recorded an exit */
   kill(): void {
-    if (this.code === undefined) {
-      this.worker.terminate();
-      this.recordExit(-1);
-    }
+    this.worker.terminate();
+    this.recordExit(-1);
   }
 }
 
