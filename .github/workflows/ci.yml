@@ -6,7 +6,10 @@ on:
   pull_request:
     branches: [main]
 
-# A runner shares its host with other work and has one CPU, so every build here runs one job at a time.
+permissions:
+  contents: read
+
+# A runner may share its host with other work, so default JOBS stays 1 unless overridden.
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -48,8 +51,12 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           git cat-file -e "$BASE^{commit}" 2>/dev/null || BASE=$(git rev-parse HEAD~1)
-          folders=$(git diff --name-only "$BASE"...HEAD -- adapted/ | cut -d/ -f1-2 | sort -u | while read -r f; do [ -f "$f/pin" ] && printf '%s ' "$f"; done)
-          echo "folders=$folders" >> "$GITHUB_OUTPUT"
+          folders=$(git diff --name-only "$BASE"...HEAD -- adapted/ | cut -d/ -f1-2 | sort -u | while read -r f; do [ -f "$f/pin" ] && printf '%s\n' "$f"; done)
+          {
+            echo "folders<<EOF"
+            printf '%s\n' "$folders"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "changed: ${folders:-none}"
 
       - name: Setup Bun
@@ -64,8 +71,11 @@ jobs:
 
       - name: Fetch, build, compare and check
         if: steps.changed.outputs.folders != ''
+        env:
+          FOLDERS: ${{ steps.changed.outputs.folders }}
         run: |
-          for folder in ${{ steps.changed.outputs.folders }}; do
+          printf '%s\n' "$FOLDERS" | while IFS= read -r folder; do
+            [ -n "$folder" ] || continue
             echo "== $folder"
             tools/adapted.sh fetch "$folder"
             tools/adapted.sh check "$folder"

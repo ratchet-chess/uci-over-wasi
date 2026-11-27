@@ -17,10 +17,12 @@ title: "Add: <engine> <version>"
 - [ ] `pin`: the repo, the commit, the license, and how the two builds are compared
 - [ ] `edits.patch`: every edit inside the target's guard, with a comment that opens `UCI over WASI:`
 - [ ] `build.sh`: builds the native engine and the module from the same tree
+- [ ] `meta.json`: curated provenance metadata (validated by `bun tools/meta.ts --all --check`)
+- [ ] `fetch.sh`, if the build needs offline crates or an embedded network
 - [ ] `positions.txt`, if the native build has no node count that repeats
 
 **What CI checks:** the native engine and the module are built from the pinned commit, their node counts are
-compared, and `tools/wasi-check.ts` runs on the module.
+compared, `tools/meta.ts --all --check` validates `meta.json`, and `tools/wasi-check.ts` runs on the module.
 
 **The module's profile:** <!-- polls, through the helper, or deaf. -->
 

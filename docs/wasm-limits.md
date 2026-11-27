@@ -7,15 +7,14 @@ an engine can be. This document lists the limits in one place.
 - **An adapted engine** is another engine built as a module. It loses what its native build used and a
   module cannot have.
 
-In return, one file runs on every OS and CPU. Its node signature is equal under every runtime, and
-`tools/browser-bench.ts` stops if a browser's differs.
+In return, one file runs on every OS and CPU. Its node signature is equal under every runtime, and a browser benchmark harness can verify that each browser matches.
 
 Two other documents own the rules, and this document points at them:
 
 - `docs/uci-over-wasi.md` states what a module must do. This document uses its terms: module, host, GUI.
 - `helper/README.md` is the how-to for an adapted engine, with each edit it needs.
 
-This document states directions only. § Where the sizes are names the measurements.
+This document states directions only. Ratchet's browser and runtime measurements are published in [ratchet-hce](https://github.com/ratchet-chess/ratchet-hce) (`results/browser.md`, `results/runtimes.md`).
 
 ## Where a processor matters
 
@@ -36,10 +35,8 @@ flowchart LR
   one refuses the module and says why. An engine ships one module, never a second file per feature level.
 - **The runtime chooses the CPU's instructions when it compiles the module.** One file serves x86 and ARM, so
   no module is built per processor.
-- **A native executable fixes its CPU level when it is compiled.** `NATIVE` in Ratchet's `tools/package.ts` lists
+- **A native executable fixes its CPU level when it is compiled.** `NATIVE` in `ratchet-hce`'s packager (`tools/package.ts` in [ratchet-hce](https://github.com/ratchet-chess/ratchet-hce)) lists
   them. They are the only builds per processor.
-- **A Bun executable contains Bun's own runtime,** which Bun builds per OS and CPU level. `--bun` in
-  that tool names the target.
 
 ## CPU features and their WebAssembly forms
 
@@ -72,12 +69,12 @@ module that declares `requires=relaxed-simd` is refused in Safari until that rel
 | One memory maximum for every device | A module with threads fixes its memory's maximum at the link, and some phones refuse a large one. `Hash` fits inside it. | `docs/uci-over-wasi.md` § Threads |
 | 128-bit vectors | A net runs narrower than its AVX2 or AVX-512 build. | § CPU features, above |
 | No PEXT, prefetch or large pages | The engine takes the path it has for a CPU without them. | § CPU features, above |
-| A 32-bit address space | Memory is at most 4 GiB, and a browser can give less. `Hash` has a maximum. | `docs/uci-over-wasi.md` § UCI options; `results/browser.md`, largest memory |
+| A 32-bit address space | Memory is at most 4 GiB, and a browser can give less. `Hash` has a maximum. | `docs/uci-over-wasi.md` § UCI options; `ratchet-hce` `results/browser.md` |
 | Memory never shrinks | A freed hash table still counts against the limit. | `helper/README.md` § Building |
-| A runtime compiles the code | The search is slower than a C compiler's build of the same code. The first searches are slower still. | `results/browser.md`, the cold columns; `results/runtimes.md` |
+| A runtime compiles the code | The search is slower than a C compiler's build of the same code. The first searches are slower still. | `ratchet-hce` `results/browser.md`, `results/runtimes.md` |
 | No file | Probing of tablebases is off, and an engine's own book is off. | `docs/uci-over-wasi.md` § What a module may rely on |
 | The download | A page downloads the module, with any net inside it. | |
-| The host gives the clock | A browser's clock moves in coarse steps. | `results/browser.md`, clock step |
+| The host gives the clock | A browser's clock moves in coarse steps. | `ratchet-hce` `results/browser.md` |
 | Input arrives only when the module polls | What reaches a running search depends on the page. | `docs/uci-over-wasi.md` § Delivering input during a search, § In a browser |
 | Another compiler and standard library | Play that depends on the standard library differs from the native build's. | `helper/README.md` § Checking an adapted engine |
 
@@ -120,6 +117,7 @@ Each row is an edit that adapts an engine. An engine written for the target star
 
 ## Where the sizes are
 
-- **`results/browser.md`:** an engine's speed in each browser beside Bun and Node, its cold start, and what
-  each browser offers.
-- **`results/runtimes.md`:** each engine's speed under each runtime.
+Published measurements for the Ratchet own engine are in [ratchet-hce](https://github.com/ratchet-chess/ratchet-hce):
+
+- **`results/browser.md`:** speed in each browser beside Bun and Node, cold start, clock step, and memory ceilings.
+- **`results/runtimes.md`:** speed across JavaScript runtimes and native `wasm2c` builds.

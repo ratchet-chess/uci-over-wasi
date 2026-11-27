@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 the uci-over-wasi contributors. The license's text is in LICENSE.
 /* A toy UCI loop on the helper, to run tools/wasi-check.ts against it. Built for wasm32-wasip1-threads, it
    is also the first form of the spec's § Threads: threads only above Threads 1, and a spawn that fails
    leaves it searching on the threads it has. */

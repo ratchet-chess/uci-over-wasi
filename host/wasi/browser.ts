@@ -16,7 +16,7 @@
  * it. It takes the first the page and the browser allow.
  *
  * 1. Shared memory, on a cross-origin isolated page (COOP same-origin and COEP
- *    require-corp, as web/serve.ts sends). A search blocks the thread that runs
+ *    require-corp, sent by the page's host). A search blocks the thread that runs
  *    it, so this script runs twice. The Worker the page makes receives the page's
  *    lines and writes them into a ring (wasi.ts Ring). A nested worker, made from
  *    this same script and named ENGINE_THREAD, runs the build and reads the ring.
@@ -93,7 +93,9 @@ function lineWriter(afterUciok = false): (fd: number, bytes: Uint8Array) => void
 }
 
 const script = scope.location.href.split("#")[0]!;
-const build = new URL(scope.location.hash.slice(1) || script.replace(/\.js$/, ".wasm"), script);
+const scriptUrl = new URL(script);
+const defaultWasm = new URL(scriptUrl.pathname.replace(/\.js$/, ".wasm"), scriptUrl).href;
+const build = new URL(scope.location.hash.slice(1) || defaultWasm, script);
 const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
 
 /**

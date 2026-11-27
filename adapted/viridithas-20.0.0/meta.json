@@ -5,6 +5,7 @@
     "Cosmo Bobak"
   ],
   "originalLanguage": "Rust",
+  "originalLicenseNote": "Engine source under MIT; embeds Viridithas network v109 (sandhi-s2-b200.nnue.zst) from https://github.com/cosmobobak/viridithas-networks (MIT).",
   "upstreamTag": "v20.0.0",
   "blurb": "Viridithas 20.0.0 is an MIT-licensed Rust UCI chess engine by Cosmo Bobak, developed since 2022 with original self-play training data and networks trained using bullet. It pairs magic bitboards, heavily tuned fractional LMR, singular/double/triple extensions, and multi-source correction histories with an embedded multi-layer NNUE featuring horizontally mirrored king buckets, threat and pawn-tuple inputs, and 8 material output buckets. Adapted to UCI over WASI on the poll helper with WebAssembly 128-bit SIMD.",
   "fidelityNotes": "Single-threaded plain wasm32-wasip1 build with 128-bit WebAssembly SIMD (+simd128) matching AVX2/NEON float FMA and reduction order; embedded zstd-compressed NNUE decompressed in memory; no Syzygy tablebases; Hash capped at 1024 MB.",

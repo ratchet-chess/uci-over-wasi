@@ -11,12 +11,12 @@
   "originalLanguage": "C++",
   "upstreamTag": "sf_10",
   "cpwPage": "Stockfish",
-  "blurb": "Stockfish 10 is the late-2018 classical release of the open-source Stockfish chess engine, originally forked from Glaurung 2.1 in 2008 and developed through Fishtest distributed SPRT testing. It pairs a tuned classical hand-crafted evaluation with aggressive late-move reductions, singular extensions, ProbCut, and continuation histories. Adapted to UCI over WASI from the pinned sf_10 commit and used as the default rating anchor in ratchet-ui.",
+  "blurb": "Stockfish 10 is the late-2018 classical release of the open-source Stockfish chess engine, originally forked from Glaurung 2.1 in 2008 and developed through Fishtest distributed SPRT testing. It pairs a tuned classical hand-crafted evaluation with aggressive late-move reductions, singular extensions, ProbCut, and continuation histories. Adapted to UCI over WASI from the pinned sf_10 commit.",
   "results": [
     {
       "date": "2018-11",
       "where": "CCRL Blitz (64-bit)",
-      "result": "3509 (default ratchet-ui anchor)",
+      "result": "3509",
       "kind": "rating"
     }
   ],

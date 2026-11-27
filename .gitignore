@@ -2,5 +2,5 @@ node_modules/
 *.log
 /tmp/
 /vendor/
-# local settings, such as BENCH
+# local environment overrides
 /tools/local.env

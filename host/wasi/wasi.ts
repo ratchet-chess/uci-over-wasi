@@ -424,7 +424,7 @@ export function canSuspend(): boolean {
  * How often a suspended search's poll gives the event loop a turn, in milliseconds:
  * the longest a `stop` waits beyond the engine's own polling. A turn costs
  * microseconds, so at this rate its cost is lost in a speed read's noise
- * (<artifacts>/scripts/wasi-port/jspi/logs/speed.log, Chrome 156 and Firefox 159).
+ * (measured in Chrome and Firefox).
  */
 const TURN_MS = 5;
 
@@ -468,6 +468,8 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
       const tag = view.getUint8(s + 8);
       if (tag === EVENT_FD_READ && view.getUint32(s + 16, true) === 0) asked.readSub = i;
       else if (tag === EVENT_CLOCK) {
+        // WASI subclockflags at offset 40: bit 0 is ABSTIME; only relative timeouts are answered
+        if (view.getUint16(s + 40, true) !== 0) return undefined;
         const ms = getU64(s + 24) / 1e6;
         if (ms < asked.timeoutMs) {
           asked.timeoutMs = ms;
@@ -627,7 +629,7 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
   let seed = 0x9e3779b9;
   const floorStubs: Record<string, (...a: number[]) => number> = {
     fd_fdstat_get(fd: number, out: number): number {
-      if (fd > 2) return EBADF;
+      if (fd < 0 || fd > 2) return EBADF;
       mem();
       bytes.fill(0, out, out + 8);
       bytes[out] = CHARACTER_DEVICE;

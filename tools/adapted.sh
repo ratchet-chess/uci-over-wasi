@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks one adapted engine: a folder of adapted/ with a pin file, edits.patch and build.sh.
+# Checks one adapted engine: a folder of adapted/ with pin, edits.patch, build.sh and meta.json.
 #
 #   tools/adapted.sh fetch <folder>   gets the engine's source at its pin; the one step that needs network
 #   tools/adapted.sh check <folder>   builds the native engine and the module, compares them, and runs the checker
