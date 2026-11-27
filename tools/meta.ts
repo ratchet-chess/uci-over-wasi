@@ -119,6 +119,11 @@ const LEAK_PATTERNS = [/<artifacts>/i, /\/mnt\//, /\/home\//, /\/work\//, /downl
 /** this repo's public home, which a package's sources link to */
 export const REPO_URL = "https://github.com/ratchet-chess/uci-over-wasi";
 
+/** the adapted folder `id` at its release tag, which is named after the folder, so a release links to the tree it was built from */
+export function adaptationUrl(id: string): string {
+  return `${REPO_URL}/tree/${id}/adapted/${id}`;
+}
+
 /** reads an adapted folder's `pin` file (shell assignments) and throws for a missing or malformed field */
 export function parsePin(path: string): PinFields {
   const fields: Record<string, string> = {};
@@ -362,7 +367,7 @@ export function buildAdaptedMeta(folder: string, repoRoot?: string): { meta: Eng
       },
       {
         label: `ratchet-chess/uci-over-wasi (adapted/${slug})`,
-        url: `${REPO_URL}/tree/main/adapted/${slug}`,
+        url: adaptationUrl(slug),
         role: "source",
         note: "UCI over WASI adaptation patches and build script",
       },

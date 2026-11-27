@@ -17,7 +17,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildAdaptedMeta, parsePin, REPO_URL } from "./meta.ts";
+import { adaptationUrl, buildAdaptedMeta, parsePin } from "./meta.ts";
 
 function isCopyleft(license: string): boolean {
   return /\b(?:A|L)?GPL\b/i.test(license);
@@ -118,7 +118,7 @@ const licenseHeader = [
   `Engine: ${id}`,
   `Upstream: ${pin.url} (commit ${pin.commit})`,
   `License: ${pin.license}`,
-  `Adaptation: ${REPO_URL}/tree/main/adapted/${id}`,
+  `Adaptation: ${adaptationUrl(id)}`,
   "",
   "---",
   "",

@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish or update a GitHub release for this tag (false = dry-run artifact only)
+        description: Publish or update the release; run from the engine's tag (false = dry-run artifact only)
         required: false
         default: false
         type: boolean
@@ -44,7 +44,14 @@ jobs:
 
       - name: Validate adapted engine folder
         id: meta
+        env:
+          PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
         run: |
+          # a release holds the tagged tree, so a publish runs from the engine's tag and fails from any other ref
+          if [ "$PUBLISH" = true ] && [ "$GITHUB_REF" != "refs/tags/$ENGINE" ]; then
+            echo "publishing $ENGINE runs from the tag $ENGINE: choose it under \"Use workflow from\"" >&2
+            exit 1
+          fi
           case "$ENGINE" in
             ""|*/*|*..*)
               echo "invalid engine id: $ENGINE" >&2
@@ -104,7 +111,7 @@ jobs:
             echo ""
             echo "- **Upstream:** $url (commit \`$commit\`)"
             echo "- **License:** $license (see \`$ENGINE-LICENSE.txt\`)"
-            echo "- **Adaptation:** https://github.com/ratchet-chess/uci-over-wasi/tree/main/adapted/$ENGINE"
+            echo "- **Adaptation:** $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$ENGINE/adapted/$ENGINE"
             if [ -f "dist/$ENGINE/$ENGINE-source.tar.gz" ]; then
               echo "- **Corresponding source:** \`$ENGINE-source.tar.gz\`"
             fi
