@@ -18,10 +18,9 @@
  * Input known in full before the engine starts needs neither (Script).
  * Platform-neutral: no node: imports.
  *
- * A module may rely on seven calls (Ratchet's core/wasi.ts imports exactly these). A libc
- * or a Rust std imports more of preview 1 than it calls, so every other import
- * gets a fixed answer (floorStubs), and a module that needs more than those
- * answers does not run here.
+ * A module may rely on seven calls (wasiImports). A libc or a Rust std imports
+ * more of preview 1 than it calls, so every other import gets a fixed answer
+ * (floorStubs), and a module that needs more than those answers does not run here.
  *
  * A module declares in a custom section (declarationOf) the features it needs
  * beyond the floor, which a host without them refuses (refusal), and whether
@@ -46,12 +45,8 @@ export type Declaration = { profile: Profile; requires: Feature[] };
 /** the custom section a module declares itself in, as lines of key=value */
 const SECTION = "uci_over_wasi";
 
-/** throws if `wasm` does not begin with the 8-byte WebAssembly binary magic and version header */
-function assertWasmHeader(wasm: Uint8Array): void {
-  if (wasm.length < 8 || wasm[0] !== 0 || wasm[1] !== 0x61 || wasm[2] !== 0x73 || wasm[3] !== 0x6d) {
-    throw new Error("not a WebAssembly module");
-  }
-}
+/** the 8-byte header of a core WebAssembly module: the magic `\0asm`, then version 1 */
+const HEADER = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
 /** an unsigned LEB128 in `wasm` at `at` (before `limit`): its value and the offset after it */
 function leb(wasm: Uint8Array, at: number, limit = wasm.length): [number, number] {
@@ -65,6 +60,19 @@ function leb(wasm: Uint8Array, at: number, limit = wasm.length): [number, number
   throw new Error("invalid LEB128 in WebAssembly module");
 }
 
+/** a module's sections in order: each one's id and the bounds of its content; throws for a bad header or a truncated section */
+function* sections(wasm: Uint8Array): Generator<{ id: number; body: number; end: number }> {
+  if (wasm.length < HEADER.length || HEADER.some((b, i) => wasm[i] !== b)) throw new Error("not a WebAssembly module");
+  for (let at = HEADER.length; at < wasm.length; ) {
+    const id = wasm[at]!;
+    const [size, body] = leb(wasm, at + 1);
+    const end = body + size;
+    if (end > wasm.length) throw new Error("truncated section in WebAssembly module");
+    yield { id, body, end };
+    at = end;
+  }
+}
+
 /**
  * A module's declaration, read from its bytes: the `profile` and `requires` lines of its `uci_over_wasi`
  * custom section, which holds lines of key=value. With no section or no line, a module polls and needs no
@@ -73,15 +81,10 @@ function leb(wasm: Uint8Array, at: number, limit = wasm.length): [number, number
  * `llvm-objcopy --add-section=uci_over_wasi=<file>`, or from its source.
  */
 export function declarationOf(wasm: Uint8Array): Declaration {
-  assertWasmHeader(wasm);
   const declaration: Declaration = { profile: "polls", requires: [] };
   const text = new TextDecoder();
-  // a module is an 8-byte header, then sections: an id byte, a size, the content; a custom section (id 0) opens with its name
-  for (let at = 8; at < wasm.length; ) {
-    const id = wasm[at];
-    const [size, body] = leb(wasm, at + 1);
-    const end = body + size;
-    if (end > wasm.length) throw new Error("truncated section in WebAssembly module");
+  for (const { id, body, end } of sections(wasm)) {
+    // a custom section (id 0) opens with its name
     if (id === 0) {
       const [nameLen, name] = leb(wasm, body, end);
       if (name + nameLen > end) throw new Error("truncated custom section in WebAssembly module");
@@ -103,7 +106,6 @@ export function declarationOf(wasm: Uint8Array): Declaration {
         }
       }
     }
-    at = end;
   }
   return declaration;
 }
@@ -151,13 +153,8 @@ const MEMORY_NAME = "memory";
  * one not shared, with no maximum, or under another name.
  */
 export function sharedMemory(wasm: Uint8Array): WebAssembly.Memory | undefined {
-  assertWasmHeader(wasm);
   const text = new TextDecoder();
-  for (let at = 8; at < wasm.length; ) {
-    const id = wasm[at];
-    const [size, body] = leb(wasm, at + 1);
-    const end = body + size;
-    if (end > wasm.length) throw new Error("truncated section in WebAssembly module");
+  for (const { id, body, end } of sections(wasm)) {
     if (id === 2) {
       let [count, p] = leb(wasm, body, end);
       const byte = () => {
@@ -202,7 +199,6 @@ export function sharedMemory(wasm: Uint8Array): WebAssembly.Memory | undefined {
       }
       return undefined;
     }
-    at = end;
   }
   return undefined;
 }
@@ -368,8 +364,7 @@ export class Queue implements Input {
 
   /** resolves when bytes arrive or input ends */
   arrival(): Promise<void> {
-    if (this.size > 0 || this.ended) return Promise.resolve();
-    return new Promise((resolve) => this.waiters.push(resolve));
+    return this.waitFor(Infinity);
   }
 
   /** resolves when bytes arrive, input ends, or `ms` elapses, without leaking a waiter or timer */
@@ -487,13 +482,14 @@ export function canSuspend(): boolean {
 const TURN_MS = 5;
 
 /**
- * The seven `wasi_snapshot_preview1` calls for one instance. `args` are the command
- * line, the program's name first; `write` receives each fd_write's bytes for fd 1
- * (stdout) or 2 (stderr). Bind the instance's memory with `setMemory` before
- * calling `_start`. With `suspend`, a Queue, `fd_read` and `poll_oneoff` are
- * suspending imports that wait for that queue (runSuspending).
+ * The preview-1 answers for one instance: the seven calls a module may rely on, read from `input`, and a
+ * fixed answer for the rest. `args` are the command line, the program's name first; `write` receives each
+ * fd_write's bytes for fd 1 (stdout) or 2 (stderr). With `suspend`, a Queue, `fd_read` and `poll_oneoff`
+ * are suspending imports that wait for that queue (runSuspending). `origin` is the monotonic clock's zero,
+ * in milliseconds since the epoch, which every thread of one instance shares. Pass `importsFor` to the
+ * instance, and bind its memory with `setMemory` before calling `_start`.
  */
-export function wasiImports(ring: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void, suspend?: Queue, origin?: number) {
+export function wasiImports(input: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void, suspend?: Queue, origin?: number) {
   let memory: WebAssembly.Memory | undefined;
   let view = new DataView(new ArrayBuffer(0));
   let bytes = new Uint8Array(0);
@@ -511,8 +507,7 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
     view.setUint32(at + 4, Math.floor(v / 0x100000000), true);
   };
   const getU64 = (at: number) => view.getUint32(at, true) + view.getUint32(at + 4, true) * 0x100000000;
-  // the monotonic clock's zero, in milliseconds since the epoch: every thread of one instance is given the same
-  // `origin`, because each Worker's performance.now() has its own zero
+  // each Worker's performance.now() has its own zero, so threads share `origin` instead
   const t0 = origin ?? performance.timeOrigin + performance.now();
 
   /** what one poll_oneoff asks for: the index of its read of stdin and of its soonest clock, -1 for none, and that clock's timeout */
@@ -545,7 +540,7 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
     if (sleepCell) Atomics.wait(sleepCell, 0, 0, ms);
   };
   /** whether the poll's read of stdin has input, or its end, to report */
-  const ready = (asked: Asked) => asked.readSub >= 0 && (ring.available() > 0 || ring.closed());
+  const ready = (asked: Asked) => asked.readSub >= 0 && (input.available() > 0 || input.closed());
   /** writes a poll's one event, once its wait is over: stdin if it is ready, else the clock, else none */
   const answerPoll = (asked: Asked, subs: number, events: number, nevents: number): number => {
     mem();
@@ -554,13 +549,12 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
       view.setUint32(nevents, 0, true);
       return ESUCCESS;
     }
-    const e = events;
-    bytes.fill(0, e, e + 32);
-    setU64(e, getU64(subs + 48 * hit));
-    view.setUint8(e + 10, hit === asked.readSub ? EVENT_FD_READ : EVENT_CLOCK);
+    bytes.fill(0, events, events + 32);
+    setU64(events, getU64(subs + 48 * hit));
+    view.setUint8(events + 10, hit === asked.readSub ? EVENT_FD_READ : EVENT_CLOCK);
     if (hit === asked.readSub) {
-      setU64(e + 16, ring.available());
-      view.setUint16(e + 24, ring.closed() ? HANGUP : 0, true);
+      setU64(events + 16, input.available());
+      view.setUint16(events + 24, input.closed() ? HANGUP : 0, true);
     }
     view.setUint32(nevents, 1, true);
     return ESUCCESS;
@@ -585,20 +579,21 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
     },
     clock_time_get(id: number, _precision: bigint, out: number): number {
       mem();
-      // realtime is 0, monotonic 1; clamp monotonic at 0 so cross-thread origin skew never wraps a u64
+      // realtime is 0; monotonic (1) and the CPU-time clocks (2, 3) answer the monotonic clock,
+      // clamped at 0 so a skew between threads' origins never wraps the u64
       const ms = id === 0 ? Date.now() : Math.max(0, performance.timeOrigin + performance.now() - t0);
       setU64(out, Math.round(ms * 1e6));
       return ESUCCESS;
     },
     fd_read(fd: number, iovs: number, iovsLen: number, nread: number): number {
       if (fd !== 0) return EBADF;
-      while (ring.available() === 0 && !ring.closed()) ring.wait(Infinity);
+      while (input.available() === 0 && !input.closed()) input.wait(Infinity);
       mem();
       let n = 0;
       for (let i = 0; i < iovsLen; i++) {
         const buf = view.getUint32(iovs + 8 * i, true);
         const len = view.getUint32(iovs + 8 * i + 4, true);
-        const got = ring.read(bytes, buf, len);
+        const got = input.read(bytes, buf, len);
         n += got;
         if (got < len) break;
       }
@@ -625,7 +620,7 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
       if (!ready(asked) && asked.timeoutMs > 0) {
         const end = performance.now() + asked.timeoutMs;
         for (let left = asked.timeoutMs; !ready(asked) && left > 0; left = end - performance.now()) {
-          if (asked.readSub >= 0) ring.wait(left);
+          if (asked.readSub >= 0) input.wait(left);
           else sleep(left);
         }
       }
@@ -764,21 +759,31 @@ export function wasiImports(ring: Input, args: string[], write: (fd: number, byt
 
 // === Module runners ===
 
+/** an instance of `module` on `wasi`'s answers, with its memory bound: the shared one in `threads`, else its own */
+function instantiate(module: WebAssembly.Module, wasi: ReturnType<typeof wasiImports>, threads?: Threads): WebAssembly.Instance {
+  const instance = new WebAssembly.Instance(module, wasi.importsFor(module, threads));
+  wasi.setMemory(threads?.memory ?? (instance.exports.memory as WebAssembly.Memory));
+  return instance;
+}
+
+/** the exit code a proc_exit unwound with; rethrows any other error, such as a trap */
+function exitCode(e: unknown): number {
+  if (e instanceof Exit) return e.code;
+  throw e;
+}
+
 /**
  * Runs one instance of a compiled WASI build to its end; returns the exit code.
  * The thread is the engine's for the whole run. A wasi-threads module needs
  * `threads`; with spawn NO_SPAWN, it plays on this thread alone.
  */
 export function runModule(module: WebAssembly.Module, input: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void, threads?: Threads): number {
-  const wasi = wasiImports(input, args, write);
-  const instance = new WebAssembly.Instance(module, wasi.importsFor(module, threads));
-  wasi.setMemory(threads?.memory ?? (instance.exports.memory as WebAssembly.Memory));
+  const instance = instantiate(module, wasiImports(input, args, write), threads);
   try {
     (instance.exports._start as () => void)();
     return 0;
   } catch (e) {
-    if (e instanceof Exit) return e.code;
-    throw e;
+    return exitCode(e);
   }
 }
 
@@ -789,9 +794,7 @@ export function runModule(module: WebAssembly.Module, input: Input, args: string
  * this thread. Returns undefined when a spawned thread returns, which ends that thread alone. A trap throws.
  */
 export function runThread(module: WebAssembly.Module, input: Input, args: string[], write: (fd: number, bytes: Uint8Array) => void, threads: Threads, origin: number, thread?: { tid: number; arg: number }): number | undefined {
-  const wasi = wasiImports(input, args, write, undefined, origin);
-  const instance = new WebAssembly.Instance(module, wasi.importsFor(module, threads));
-  wasi.setMemory(threads.memory);
+  const instance = instantiate(module, wasiImports(input, args, write, undefined, origin), threads);
   try {
     if (!thread) {
       (instance.exports._start as () => void)();
@@ -800,8 +803,7 @@ export function runThread(module: WebAssembly.Module, input: Input, args: string
     (instance.exports.wasi_thread_start as (tid: number, arg: number) => void)(thread.tid, thread.arg);
     return undefined;
   } catch (e) {
-    if (e instanceof Exit) return e.code;
-    throw e;
+    return exitCode(e);
   }
 }
 
@@ -819,14 +821,12 @@ export function nextThreadId(ids: Int32Array): number {
  */
 export async function runSuspending(module: WebAssembly.Module, input: Queue, args: string[], write: (fd: number, bytes: Uint8Array) => void, threads?: Threads): Promise<number> {
   const wasi = wasiImports(input, args, write, input);
-  const instance = new WebAssembly.Instance(module, wasi.importsFor(module, threads));
-  wasi.setMemory(threads?.memory ?? (instance.exports.memory as WebAssembly.Memory));
+  const instance = instantiate(module, wasi, threads);
   try {
     await jspi.promising!(instance.exports._start as Function)();
     return 0;
   } catch (e) {
-    if (e instanceof Exit) return e.code;
-    throw e;
+    return exitCode(e);
   } finally {
     wasi.close();
   }

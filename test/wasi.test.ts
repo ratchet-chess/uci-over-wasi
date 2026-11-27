@@ -78,6 +78,8 @@ describe("declarationOf and refusal", () => {
     const html = new TextEncoder().encode("<!DOCTYPE html><html><body>404</body></html>");
     assert.throws(() => declarationOf(html), /not a WebAssembly module/);
     assert.throws(() => declarationOf(new Uint8Array([0, 97, 115])), /not a WebAssembly module/);
+    // a component has the magic but another version
+    assert.throws(() => declarationOf(new Uint8Array([0, 97, 115, 109, 0x0d, 0, 1, 0])), /not a WebAssembly module/);
     // truncated section size LEB with high bit set at EOF
     assert.throws(() => declarationOf(new Uint8Array([...HEADER, 0x00, 0x80])), /unexpected end/);
     // section claims more bytes than present
