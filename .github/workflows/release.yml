@@ -4,6 +4,10 @@ name: Release adapted engine
 # optional <id>-source.tar.gz for GPL/LGPL/AGPL engines, and SHA256SUMS).
 # Guarded by github.server_url so Gitea ignores this job when mirroring.
 # Tag one adapted folder by its id (e.g. `stockfish-10`) to build, check and publish that engine.
+#
+# The build runs the engine's own build and binaries, so it holds a read-only token and keeps none on disk.
+# Only the publish job can write, and it runs no code of the engine's: it uploads the build's artifact.
+# Actions are pinned by commit, since a tag can be moved.
 on:
   push:
     tags:
@@ -22,17 +26,21 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  ENGINE: ${{ github.event_name == 'workflow_dispatch' && inputs.engine || github.ref_name }}
 
 jobs:
-  release:
+  build:
     if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
-    env:
-      ENGINE: ${{ github.event_name == 'workflow_dispatch' && inputs.engine || github.ref_name }}
-      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Validate adapted engine folder
         id: meta
@@ -58,7 +66,7 @@ jobs:
           echo "engine: $ENGINE (toolchains: $need)"
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
 
@@ -107,20 +115,33 @@ jobs:
             echo '```'
           } > "dist/$ENGINE/RELEASE_NOTES.md"
 
-      - name: Upload dry-run artifact
-        if: env.PUBLISH != 'true'
-        uses: actions/upload-artifact@v4
+      - name: Upload the release's files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: adapted-${{ env.ENGINE }}
-          path: |
-            dist/${{ env.ENGINE }}/*
-            !dist/${{ env.ENGINE }}/RELEASE_NOTES.md
+          path: dist/${{ env.ENGINE }}/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.server_url == 'https://github.com' && (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the release's files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: adapted-${{ env.ENGINE }}
+          path: dist/${{ env.ENGINE }}
 
       - name: Publish GitHub release
-        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          # no checkout here, so gh is told the repo
+          GH_REPO: ${{ github.repository }}
         run: |
+          (cd "dist/$ENGINE" && sha256sum -c SHA256SUMS)
           assets=(
             "dist/$ENGINE/$ENGINE.wasm"
             "dist/$ENGINE/$ENGINE.meta.json"
