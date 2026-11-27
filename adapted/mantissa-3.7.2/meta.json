@@ -1,0 +1,80 @@
+{
+  "date": "2022-08-18",
+  "year": 2022,
+  "originalAuthors": [
+    "Jeremy Wright"
+  ],
+  "originalLanguage": "Rust",
+  "upstreamTag": "v3.7.2",
+  "cpwPage": "Mantissa",
+  "blurb": "Mantissa 3.7.2 is an open-source Rust UCI chess engine by Jeremy Wright, begun in 2021 to explore chess programming and Rust. It combines magic bitboards and a selective alpha-beta search with an embedded 768 -> 256x2 -> 1 perspective-mirrored NNUE trained on Mantissa self-play games. Adapted to UCI over WASI on the poll helper with WebAssembly 128-bit SIMD.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build with fixed-width 128-bit SIMD (+simd128) for the embedded NNUE; Hash capped for 32-bit memory.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards with Zobrist position hashing."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Negamax alpha-beta search with zero-window probes, aspiration windows, and quiescence search."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Reduced-depth null-move pruning at non-PV nodes."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Depth reductions on late moves combined with futility and delta pruning."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Late Move Pruning",
+      "group": "Search",
+      "implementation": "Move-count pruning of late quiet moves at shallow search depths."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility Pruning",
+      "group": "Search",
+      "implementation": "Static evaluation cutoff above beta at shallow depths."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Exclusion search extending singular transposition-table moves."
+    },
+    {
+      "key": "Multi-Cut",
+      "label": "Multi-Cut",
+      "group": "Search",
+      "implementation": "Early beta cutoff when multiple reduced moves fail high."
+    },
+    {
+      "key": "Static_Exchange_Evaluation",
+      "label": "SEE Pruning",
+      "group": "Ordering",
+      "implementation": "Static exchange evaluation for capture pruning in quiescence search and move ordering."
+    },
+    {
+      "key": "History_Heuristic#CMHist",
+      "label": "Countermove & Follow-up History",
+      "group": "Ordering",
+      "implementation": "Butterfly history paired with countermove and follow-up histories, killers, and countermove heuristic."
+    },
+    {
+      "key": "NNUE",
+      "label": "Embedded NNUE",
+      "group": "Evaluation",
+      "implementation": "Perspective-mirrored 768 -> 256x2 -> 1 floating-point neural network trained on Mantissa self-play games."
+    }
+  ]
+}

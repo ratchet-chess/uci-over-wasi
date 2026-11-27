@@ -24,7 +24,8 @@ where, ask the user.
 - `host/wasi/`: the reference host: under Bun and Node (`main.ts`, `thread.ts`), in a page (`browser.ts`), the WASI calls both answer (`wasi.ts`), the feature decoder (`features.ts`), and the shared checker (`check.ts`, `check-browser.ts`, `check-worker.ts`).
 - `tools/wasi-check.ts`: the CLI driver for `host/wasi/check.ts`. `tools/wasm-features.ts` prints `host/wasi/features.ts`.
 - `tools/adapted.sh`: fetches, builds, compares and checks one adapted engine. Its header states the form of a folder of `adapted/`.
-- `tools/meta.ts`: combines an adapted folder's `pin` and optional `meta.json` into public `<id>.meta.json` provenance metadata for GUIs (`--check`, `--all`).
+- `tools/meta.ts`: combines an adapted folder's `pin` and `meta.json` into public `<id>.meta.json` provenance metadata for GUIs (`--check`, `--all`), and validates CPW keys and `#Section` anchors when `vendor/cpw/pages` is present.
+- `tools/package.ts`: packages a checked adapted module into `<out>/<id>/` with `<id>.wasm`, `<id>.meta.json`, and `SHA256SUMS`.
 - `tools/positions.ts`: a build's moves and node counts over a position file.
 - `tools/toolchains.sh` and `tools/toolchains.txt`: the pinned toolchains.
 - `tools/vendor.ts`: copies the host into another repo.
@@ -49,7 +50,7 @@ tools/adapted.sh check adapted/<folder>                   # both builds, their c
 
 ## Adapted engines
 
-- **One folder holds one engine at one version:** `pin`, `edits.patch`, `build.sh`, and optionally `meta.json` (curated provenance and 8-15 CPW features, checked by `tools/meta.ts`). `tools/adapted.sh` states the build files' form.
+- **One folder holds one engine at one version:** `pin`, `edits.patch`, `build.sh`, and `meta.json` (curated provenance and 8-15 CPW features, checked by `tools/meta.ts --all --check`). `tools/adapted.sh` states the build files' form.
 - **Read the engine's license in its own source,** and write it in the pin file. The folder's files are under that license.
 - **Adapt only an engine whose license permits the edits and their publication.**
 - **Put every edit under the target's guard,** `#ifdef __wasi__` or `cfg(target_os = "wasi")`. Open its comment with `UCI over WASI:`.

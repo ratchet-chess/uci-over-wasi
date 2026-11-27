@@ -46,6 +46,11 @@ export interface CpwFeature {
   landmark?: boolean;
 }
 
+export interface ProbeHint {
+  depths: number[];
+  defaultDepth: number;
+}
+
 export interface EngineMeta {
   kind: "adapted";
   buildBasis: "adapted-from-code";
@@ -62,10 +67,7 @@ export interface EngineMeta {
   results?: HistoricalResult[];
   fidelity?: FidelitySummary;
   features: CpwFeature[];
-  probe?: {
-    depths: number[];
-    defaultDepth: number;
-  };
+  probe?: ProbeHint;
 }
 
 interface PinFields {
@@ -74,6 +76,7 @@ interface PinFields {
   license: string;
   compare: string;
   nodes?: string;
+  gate?: string;
   module: string;
 }
 
@@ -83,21 +86,36 @@ interface SidecarMeta {
   originalAuthors: string[];
   affiliation?: string;
   originalLanguage?: string;
+  originalLicenseNote?: string;
   upstreamTag?: string;
   cpwPage?: string;
   blurb: string;
   results?: HistoricalResult[];
   fidelityNotes?: string;
   features: CpwFeature[];
-  probe?: {
-    depths: number[];
-    defaultDepth: number;
-  };
+  probe?: ProbeHint;
 }
 
-const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null;
+const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
+const isNonEmptyStr = (x: unknown): x is string => typeof x === "string" && x.trim().length > 0;
 const GROUPS = new Set(["Board", "Search", "Ordering", "Evaluation", "Tables"]);
-const LEAK_PATTERNS = [/<artifacts>/i, /\/mnt\//, /\/home\//, /\/work\//];
+const RESULT_KINDS = new Set(["tournament", "match", "rating"]);
+const SIDECAR_KEYS = new Set([
+  "date",
+  "year",
+  "originalAuthors",
+  "affiliation",
+  "originalLanguage",
+  "originalLicenseNote",
+  "upstreamTag",
+  "cpwPage",
+  "blurb",
+  "results",
+  "fidelityNotes",
+  "features",
+  "probe",
+]);
+const LEAK_PATTERNS = [/<artifacts>/i, /\/mnt\//, /\/home\//, /\/work\//, /downloads\//];
 
 function parsePin(path: string): PinFields {
   const fields: Record<string, string> = {};
@@ -119,56 +137,166 @@ function parsePin(path: string): PinFields {
     license: fields.license,
     compare: fields.compare,
     nodes: fields.nodes,
+    gate: fields.gate,
     module: fields.module,
   };
 }
 
 function repoShortName(url: string): string {
-  const m = /github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url);
+  const m = /(?:github\.com|gitlab\.com|bitbucket\.org)\/(.+?)(?:\.git)?\/?$/.exec(url);
   return m ? m[1] : url;
 }
 
 function upstreamTreeUrl(url: string, commit: string): string {
   const clean = url.replace(/\.git$/, "").replace(/\/$/, "");
   if (clean.includes("github.com/")) return `${clean}/tree/${commit}`;
+  if (clean.includes("gitlab.com/")) return `${clean}/-/tree/${commit}`;
+  if (clean.includes("bitbucket.org/")) return `${clean}/src/${commit}`;
   return clean;
+}
+
+function assertOptStr(obj: Record<string, unknown>, key: string, path: string): void {
+  if (obj[key] !== undefined && !isNonEmptyStr(obj[key])) {
+    throw new Error(`${path}: ${key} must be a non-empty string`);
+  }
 }
 
 function parseSidecar(path: string): SidecarMeta {
   const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (!isRecord(raw)) throw new Error(`${path}: root must be an object`);
-  if (typeof raw.date !== "string" || !/^\d{4}/.test(raw.date)) {
+  for (const key of Object.keys(raw)) {
+    if (!SIDECAR_KEYS.has(key)) throw new Error(`${path}: unknown field "${key}"`);
+  }
+  if (typeof raw.date !== "string" || !/^\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(raw.date)) {
     throw new Error(`${path}: missing or invalid date`);
   }
   if (typeof raw.year !== "number" || !Number.isInteger(raw.year)) {
     throw new Error(`${path}: missing or invalid year`);
   }
-  if (!Array.isArray(raw.originalAuthors) || raw.originalAuthors.length === 0 || !raw.originalAuthors.every((a) => typeof a === "string")) {
+  if (raw.year !== Number(raw.date.slice(0, 4))) {
+    throw new Error(`${path}: year ${raw.year} does not match date ${raw.date}`);
+  }
+  if (!Array.isArray(raw.originalAuthors) || raw.originalAuthors.length === 0 || !raw.originalAuthors.every(isNonEmptyStr)) {
     throw new Error(`${path}: originalAuthors must be a non-empty string array`);
   }
-  if (typeof raw.blurb !== "string" || !raw.blurb.trim()) {
+  assertOptStr(raw, "affiliation", path);
+  assertOptStr(raw, "originalLanguage", path);
+  assertOptStr(raw, "originalLicenseNote", path);
+  assertOptStr(raw, "upstreamTag", path);
+  assertOptStr(raw, "cpwPage", path);
+  assertOptStr(raw, "fidelityNotes", path);
+  if (!isNonEmptyStr(raw.blurb)) {
     throw new Error(`${path}: missing blurb`);
+  }
+  if (raw.results !== undefined) {
+    if (!Array.isArray(raw.results)) throw new Error(`${path}: results must be an array`);
+    for (const r of raw.results) {
+      if (
+        !isRecord(r) ||
+        !isNonEmptyStr(r.where) ||
+        !isNonEmptyStr(r.result) ||
+        !isNonEmptyStr(r.date) ||
+        typeof r.kind !== "string" ||
+        !RESULT_KINDS.has(r.kind)
+      ) {
+        throw new Error(`${path}: invalid results entry`);
+      }
+    }
+  }
+  if (raw.probe !== undefined) {
+    if (
+      !isRecord(raw.probe) ||
+      !Array.isArray(raw.probe.depths) ||
+      raw.probe.depths.length === 0 ||
+      !raw.probe.depths.every((d) => typeof d === "number" && Number.isInteger(d) && d > 0) ||
+      typeof raw.probe.defaultDepth !== "number" ||
+      !Number.isInteger(raw.probe.defaultDepth) ||
+      raw.probe.defaultDepth <= 0 ||
+      !raw.probe.depths.includes(raw.probe.defaultDepth)
+    ) {
+      throw new Error(`${path}: invalid probe entry`);
+    }
   }
   if (!Array.isArray(raw.features) || raw.features.length < 8 || raw.features.length > 15) {
     throw new Error(`${path}: features must have 8-15 CPW entries`);
   }
+  const seenKeys = new Set<string>();
   for (const f of raw.features) {
     if (
       !isRecord(f) ||
-      typeof f.key !== "string" ||
-      typeof f.label !== "string" ||
+      !isNonEmptyStr(f.key) ||
+      !isNonEmptyStr(f.label) ||
       typeof f.group !== "string" ||
       !GROUPS.has(f.group) ||
-      typeof f.implementation !== "string"
+      !isNonEmptyStr(f.implementation) ||
+      (f.ref !== undefined && !isNonEmptyStr(f.ref)) ||
+      (f.landmark !== undefined && typeof f.landmark !== "boolean")
     ) {
       throw new Error(`${path}: invalid feature entry`);
     }
+    if (seenKeys.has(f.key)) throw new Error(`${path}: duplicate CPW feature key "${f.key}"`);
+    seenKeys.add(f.key);
   }
   return raw as unknown as SidecarMeta;
 }
 
-export function buildAdaptedMeta(folder: string): EngineMeta {
+/** Normalizes a MediaWiki heading to its URL fragment identifier. */
+function headingToAnchor(heading: string): string {
+  return heading
+    .replace(/\[\[[^|\]]+\|([^\]]+)\]\]/g, "$1")
+    .replace(/\[\[([^\]]+)\]\]/g, "$1")
+    .replace(/'''?/g, "")
+    .replace(/<[^>]+>/g, "")
+    .trim()
+    .replace(/\s+/g, "_");
+}
+
+function hasWikiSection(wikiText: string, section: string): boolean {
+  const decoded = decodeURIComponent(section);
+  for (const line of wikiText.split(/\r?\n/)) {
+    const m = /^=+(.+?)=+\s*$/.exec(line.trim());
+    if (m && headingToAnchor(m[1]) === decoded) return true;
+  }
+  const idRe = /\bid\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/g;
+  for (const m of wikiText.matchAll(idRe)) {
+    const id = m[1] ?? m[2] ?? m[3];
+    if (id === decoded || id === section) return true;
+  }
+  return false;
+}
+
+/** Validates CPW page and `#Section` keys when a local CPW dump is symlinked at `vendor/cpw/pages`. */
+function checkCpwKeys(root: string, meta: EngineMeta, slug: string): boolean {
+  const cpwDir = join(root, "vendor/cpw/pages");
+  if (!existsSync(cpwDir)) return false;
+  const pageCache = new Map<string, string>();
+  const check = (key: string) => {
+    const hashIdx = key.indexOf("#");
+    const page = hashIdx >= 0 ? key.slice(0, hashIdx) : key;
+    const section = hashIdx >= 0 ? key.slice(hashIdx + 1) : undefined;
+    const wikiPath = join(cpwDir, `${page}.wiki`);
+    if (!existsSync(wikiPath)) {
+      throw new Error(`${slug}: CPW key "${key}" has no page ${page}.wiki in vendor/cpw/pages/`);
+    }
+    if (section !== undefined) {
+      let text = pageCache.get(page);
+      if (text === undefined) {
+        text = readFileSync(wikiPath, "utf8");
+        pageCache.set(page, text);
+      }
+      if (!hasWikiSection(text, section)) {
+        throw new Error(`${slug}: CPW key "${key}" has no section or anchor #${section} in ${page}.wiki`);
+      }
+    }
+  };
+  if (meta.cpwPage) check(meta.cpwPage);
+  for (const f of meta.features) check(f.key);
+  return true;
+}
+
+export function buildAdaptedMeta(folder: string, repoRoot?: string): { meta: EngineMeta; cpwChecked: boolean } {
   const abs = resolve(folder);
+  const root = repoRoot ? resolve(repoRoot) : resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const slug = basename(abs);
   const pinPath = join(abs, "pin");
   const sidecarPath = join(abs, "meta.json");
@@ -182,14 +310,17 @@ export function buildAdaptedMeta(folder: string): EngineMeta {
     ? `${repoShortName(pin.url)} (${sidecar.upstreamTag})`
     : repoShortName(pin.url);
 
+  const fidelityStatus: FidelitySummary["status"] = pin.gate ? "matched" : "exact";
   const fidelityHeadline =
     pin.compare === "bench" && pin.nodes
       ? `Bench exact (${Number(pin.nodes).toLocaleString("en-US")} nodes vs. native)`
-      : "Exact moves and node counts vs. native";
+      : pin.gate
+        ? `Exact moves and node counts vs. native (gated with ${pin.gate})`
+        : "Exact moves and node counts vs. native";
 
   const refSuffix = sidecar.upstreamTag ? ` (${sidecar.upstreamTag})` : "";
   const fidelity: FidelitySummary = {
-    status: "exact",
+    status: fidelityStatus,
     headline: fidelityHeadline,
     referenceOf: `Native binary compiled from commit ${pin.commit.slice(0, 8)}${refSuffix}`,
     ...(sidecar.fidelityNotes ? { notes: sidecar.fidelityNotes } : {}),
@@ -204,6 +335,7 @@ export function buildAdaptedMeta(folder: string): EngineMeta {
     ...(sidecar.affiliation ? { affiliation: sidecar.affiliation } : {}),
     ...(sidecar.originalLanguage ? { originalLanguage: sidecar.originalLanguage } : {}),
     originalLicense: pin.license,
+    ...(sidecar.originalLicenseNote ? { originalLicenseNote: sidecar.originalLicenseNote } : {}),
     sources: [
       {
         label,
@@ -221,11 +353,12 @@ export function buildAdaptedMeta(folder: string): EngineMeta {
     ...(sidecar.probe ? { probe: sidecar.probe } : {}),
   };
 
+  const cpwChecked = checkCpwKeys(root, meta, slug);
   const text = JSON.stringify(meta, null, 2);
   for (const pat of LEAK_PATTERNS) {
     if (pat.test(text)) throw new Error(`${slug}: metadata contains private path matching ${pat}`);
   }
-  return meta;
+  return { meta, cpwChecked };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -238,26 +371,32 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 
   if (all) {
     const adaptedDir = join(root, "adapted");
+    const entries = readdirSync(adaptedDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && existsSync(join(adaptedDir, e.name, "pin")))
+      .sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
     let count = 0;
-    for (const entry of readdirSync(adaptedDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
+    let cpwCheckedAny = false;
+    for (const entry of entries) {
       const dir = join(adaptedDir, entry.name);
-      if (!existsSync(join(dir, "meta.json"))) continue;
-      const meta = buildAdaptedMeta(dir);
-      console.log(`${entry.name}: valid (${meta.features.length} CPW features)`);
+      const { meta, cpwChecked } = buildAdaptedMeta(dir, root);
+      if (cpwChecked) cpwCheckedAny = true;
+      console.log(`${entry.name}: valid (${meta.features.length} CPW features${cpwChecked ? ", CPW verified" : ""})`);
       count++;
     }
-    if (count === 0) throw new Error("no adapted/*/meta.json files found");
+    if (count === 0) throw new Error("no adapted/*/pin folders found");
+    if (!cpwCheckedAny) console.log("note: vendor/cpw/pages not present; skipped local CPW dump verification");
   } else {
     const folder = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out");
     if (!folder) {
       console.error("usage: bun tools/meta.ts <adapted/folder> [--out <path>] [--check] | --all --check");
       process.exit(2);
     }
-    const meta = buildAdaptedMeta(folder);
+    const { meta, cpwChecked } = buildAdaptedMeta(folder, root);
     const json = `${JSON.stringify(meta, null, 2)}\n`;
     if (check) {
-      console.log(`${basename(resolve(folder))}: valid (${meta.features.length} CPW features)`);
+      console.log(
+        `${basename(resolve(folder))}: valid (${meta.features.length} CPW features${cpwChecked ? ", CPW verified" : ""})`,
+      );
     } else if (outPath) {
       mkdirSync(dirname(outPath), { recursive: true });
       writeFileSync(outPath, json);

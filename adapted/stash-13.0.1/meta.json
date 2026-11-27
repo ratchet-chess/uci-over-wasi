@@ -1,0 +1,74 @@
+{
+  "date": "2020-04-01",
+  "year": 2020,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v13",
+  "cpwPage": "Stash",
+  "blurb": "Stash 13.0.1 is the April 2020 release of Morgan Houppin's C UCI chess engine, adding selectivity to its PVS and transposition-table core through null move pruning with zugzwang verification, static exchange evaluation, and initial late move reductions. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper; Hash capped for 32-bit memory. Native bench uses a fixed 1 ms thread-startup wait, so comparison uses positions.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards for bishop and rook sliding-piece attacks."
+    },
+    {
+      "key": "Iterative_Deepening",
+      "label": "Iterative Deepening",
+      "group": "Search",
+      "implementation": "Iterative root search with transposition-table seeding and a UCI bench command."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Negamax PVS with null-window probes and re-searches on fail-high."
+    },
+    {
+      "key": "Quiescence_Search",
+      "label": "Quiescence Search",
+      "group": "Search",
+      "implementation": "Horizon capture and promotion search with stand-pat cutoffs."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Null-move pruning with zugzwang verification search when non-pawn material is low."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Fixed two-ply depth reduction on late moves with full-depth re-search on fail-high."
+    },
+    {
+      "key": "Static_Exchange_Evaluation",
+      "label": "SEE",
+      "group": "Ordering",
+      "implementation": "Static exchange evaluation threshold checks (`see_greater_than`) for tactical filtering."
+    },
+    {
+      "key": "Hash_Move",
+      "label": "Hash Move & MVV-LVA",
+      "group": "Ordering",
+      "implementation": "Transposition-table move prioritized ahead of MVV-LVA captures and PSQT-ordered quiet moves."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Zobrist-indexed hash table storing search bounds, depths, and best moves."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered PSQT Eval",
+      "group": "Evaluation",
+      "implementation": "Incrementally maintained middlegame and endgame piece-square scores interpolated by remaining material."
+    }
+  ]
+}

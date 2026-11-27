@@ -1,0 +1,84 @@
+{
+  "date": "2020-01-18",
+  "year": 2020,
+  "originalAuthors": [
+    "Tord Romstad",
+    "Marco Costalba",
+    "Joona Kiiski",
+    "Gary Linscott",
+    "Stockfish contributors"
+  ],
+  "originalLanguage": "C++",
+  "upstreamTag": "sf_11",
+  "cpwPage": "Stockfish",
+  "blurb": "Stockfish 11 is the January 2020 release of Stockfish and the final major release built exclusively on its classical hand-crafted evaluation before NNUE arrived in Stockfish 12. Developed through Fishtest distributed SPRT testing, it pairs magic bitboards, aggressive LMR, singular extensions, ProbCut, and continuation and capture histories with a deeply tuned classical evaluator. Adapted to UCI over WASI from the pinned sf_11 commit.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build (Threads fixed to 1); no Syzygy tablebases (no filesystem in WASI).",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "Plain 64-bit magic bitboards for sliding-piece attack generation."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Null-window searches after the first move with full-window re-searches on fail-high."
+    },
+    {
+      "key": "Aspiration_Windows",
+      "label": "Aspiration Windows",
+      "group": "Search",
+      "implementation": "Narrow root window from depth 4 with asymmetric widening on fail-high or fail-low."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Dynamic reduction scaled by depth and static eval margin over beta, with verification search at high depth."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Logarithmic reduction table adjusted by PV, improving flag, cut-node status, and move history."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "TT-move exclusion search extending singular moves alongside multi-cut and negative extensions."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Shallow reduced search on SEE-passing captures to prune clear beta cutoffs early."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Continuation History",
+      "group": "Ordering",
+      "implementation": "Gravity-updated butterfly table plus 1-, 2-, and 4-ply piece-to continuation histories."
+    },
+    {
+      "key": "History_Heuristic#Capture_History",
+      "label": "Capture History",
+      "group": "Ordering",
+      "implementation": "Piece-to-captured history table guiding tactical move ordering and capture pruning."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Packed middlegame/endgame score pairs with material imbalance, mobility, space, initiative, and lazy evaluation."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Zone Attack",
+      "group": "Evaluation",
+      "implementation": "Weighted piece attacks, safe checks, and pawn shelter/storm combined nonlinearly into king danger."
+    }
+  ]
+}

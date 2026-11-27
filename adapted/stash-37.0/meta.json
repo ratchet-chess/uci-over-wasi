@@ -1,0 +1,92 @@
+{
+  "date": "2025-04-24",
+  "year": 2025,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v37.0",
+  "cpwPage": "Stash",
+  "blurb": "Stash 37.0 is the April 2025 release of Morgan Houppin's classical hand-crafted evaluation C UCI chess engine, tuned with its built-in Texel tuner and OpenBench SPRT testing. It pairs magic bitboards, ProbCut, singular extensions, improving-scaled fractional LMR and quadratic LMP, pawn and non-pawn correction histories, and continuation/capture histories with a comprehensive classical evaluator and WDL score normalization. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper (Threads fixed to 1); Hash capped for 32-bit memory.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards (with generic fallback for WASI and optional BMI2 PEXT natively)."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS & Aspiration Windows",
+      "group": "Search",
+      "implementation": "Iterative deepening PVS with root aspiration windows and normalized WDL scoring."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Dynamic null-move pruning from depth 3 with zugzwang verification search."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Reduced capture search with SEE filtering to prune clear beta cutoffs early."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Excluded-move search extending singular transposition-table moves."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Fractional LMR",
+      "group": "Search",
+      "implementation": "Improving- and quiet-aware fixed-point reduction table adjusted by search heuristics and history."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Quadratic LMP & RFP",
+      "group": "Search",
+      "implementation": "Improving-scaled quadratic late move pruning paired with reverse futility pruning up to depth 7 and razoring."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Continuation & Correction History",
+      "group": "Ordering",
+      "implementation": "Quiet, countermove, and continuation histories paired with pawn and non-pawn static-eval correction histories."
+    },
+    {
+      "key": "History_Heuristic#Capture_History",
+      "label": "Capture History",
+      "group": "Ordering",
+      "implementation": "Capture history combined with SEE and staged move picking for tactical ordering."
+    },
+    {
+      "key": "Pawn_Hash_Table",
+      "label": "King-Pawn Eval Cache",
+      "group": "Tables",
+      "implementation": "Dedicated king-pawn structure cache (`kp_eval`) alongside the main transposition table."
+    },
+    {
+      "key": "Endgame_Bitbases",
+      "label": "KPK Bitbase",
+      "group": "Tables",
+      "implementation": "Exact precomputed king-and-pawn versus king bitbase for pawn endgames."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Safety",
+      "group": "Evaluation",
+      "implementation": "Attack-weighted king zone danger, safe/unsafe checks, and pawn shelter/storm."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Classical Eval",
+      "group": "Evaluation",
+      "implementation": "Texel-tuned middlegame/endgame evaluation with outposts, mobility, threats, space, passed pawns, and endgame scaling."
+    }
+  ]
+}

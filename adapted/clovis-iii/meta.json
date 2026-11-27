@@ -1,0 +1,79 @@
+{
+  "date": "2023-02-28",
+  "year": 2023,
+  "originalAuthors": [
+    "Jonathan McDermid"
+  ],
+  "originalLanguage": "C++",
+  "upstreamTag": "III",
+  "blurb": "Clovis III is a classical C++17 UCI chess engine by Jonathan McDermid, written as a successor to Hopper Chess. It pairs magic bitboards and a Texel-tuned tapered evaluation with principal variation search, internal iterative deepening, null move pruning, reverse futility pruning, and logarithmic late move reductions. Adapted to UCI over WASI under the deaf profile.",
+  "fidelityNotes": "Deaf profile (reads input between searches, not mid-search) and single-threaded. Compared with stable-sort.patch on both builds because std::sort orders equal-score moves differently under libstdc++ and libc++.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards for sliding-piece attack lookups."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Negamax principal variation search with null-window probes and re-searches on fail-high."
+    },
+    {
+      "key": "Aspiration_Windows",
+      "label": "Aspiration Windows",
+      "group": "Search",
+      "implementation": "Root aspiration window from depth 3 with progressive widening on fail-high or fail-low."
+    },
+    {
+      "key": "Quiescence_Search",
+      "label": "Quiescence Search",
+      "group": "Search",
+      "implementation": "Horizon capture search with stand-pat cutoffs and transposition table probing."
+    },
+    {
+      "key": "Internal_Iterative_Deepening",
+      "label": "Internal Iterative Deepening",
+      "group": "Search",
+      "implementation": "Precomputed reduced-depth search when no hash move is available at high depth."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Reduced-depth null-move pruning enabled from depth 3."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility Pruning",
+      "group": "Search",
+      "implementation": "Static evaluation margin pruning at shallow non-PV nodes."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Log-log reduction table adjusted by quiet move history scores."
+    },
+    {
+      "key": "Countermove_Heuristic",
+      "label": "Countermove & Killers",
+      "group": "Ordering",
+      "implementation": "Killer moves and countermove heuristic beside MVV-LVA and static exchange evaluation."
+    },
+    {
+      "key": "Pawn_Hash_Table",
+      "label": "Pawn Hash Table",
+      "group": "Tables",
+      "implementation": "Dedicated hash cache storing evaluated pawn structure scores."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Texel-tuned middlegame and endgame evaluation with PSQTs, mobility, outposts, pawn structure, and king safety."
+    }
+  ]
+}

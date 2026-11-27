@@ -1,0 +1,79 @@
+{
+  "date": "2026-06-27",
+  "year": 2026,
+  "originalAuthors": [
+    "Cosmo Bobak"
+  ],
+  "originalLanguage": "Rust",
+  "upstreamTag": "v20.0.0",
+  "blurb": "Viridithas 20.0.0 is an MIT-licensed Rust UCI chess engine by Cosmo Bobak, developed since 2022 with original self-play training data and networks trained using bullet. It pairs magic bitboards, heavily tuned fractional LMR, singular/double/triple extensions, and multi-source correction histories with an embedded multi-layer NNUE featuring horizontally mirrored king buckets, threat and pawn-tuple inputs, and 8 material output buckets. Adapted to UCI over WASI on the poll helper with WebAssembly 128-bit SIMD.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build with 128-bit WebAssembly SIMD (+simd128) matching AVX2/NEON float FMA and reduction order; embedded zstd-compressed NNUE decompressed in memory; no Syzygy tablebases; Hash capped at 1024 MB.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards with portable ray geometry under WASI."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Type-parameterized Root/PV/non-PV negamax search with iterative deepening and aspiration windows."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Improving-aware dynamic null-move pruning scaled by depth and static eval margin."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Fractional LMR",
+      "group": "Search",
+      "implementation": "Fixed-point LMR adjusted by PV, TT-PV, cut-node, check, correction, and move history terms."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Singular, double, and triple extensions paired with hindsight depth adjustments."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Adaptive SEE-scaled ProbCut pruning on high-value captures."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility & Razoring",
+      "group": "Search",
+      "implementation": "Improving-adjusted reverse futility pruning alongside futility pruning, razoring, and SEE pruning."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Continuation & Correction History",
+      "group": "Ordering",
+      "implementation": "Main, pawn, and 1-/2-/4-ply continuation histories plus pawn, minor, major, non-pawn, and continuation correction histories."
+    },
+    {
+      "key": "History_Heuristic#Capture_History",
+      "label": "Tactical History",
+      "group": "Ordering",
+      "implementation": "Capture and promotion history combined with SEE for tactical move ordering and pruning."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Hash table storing bounds, PV flags, best moves, and static evaluations."
+    },
+    {
+      "key": "NNUE",
+      "label": "Multi-Layer NNUE",
+      "group": "Evaluation",
+      "implementation": "Embedded bullet-trained 1024x2 -> 32 -> 32 -> 1 NNUE with 16 horizontally mirrored king buckets, threat and pawn-tuple features, and 8 material output buckets."
+    }
+  ]
+}

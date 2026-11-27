@@ -1,0 +1,80 @@
+{
+  "date": "2024-05-25",
+  "year": 2024,
+  "originalAuthors": [
+    "Martin Danielsson"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v6.3.0",
+  "cpwPage": "Marvin",
+  "blurb": "Marvin 6.3.0 is an open-source C UCI and XBoard chess engine by Martin Danielsson, rewritten and open-sourced in 2017 after an earlier closed-source line from 2002 to 2005. It embeds an incrementally updated 768 -> 1024x2 -> 1 NNUE network backed by an evaluation cache and pairs it with plain magic bitboards, ProbCut, singular extensions, razoring, and countermove/follow-up history pruning. Adapted to UCI over WASI on the poll helper using WebAssembly exception handling for search abort via setjmp/longjmp.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build requiring WebAssembly exception handling (requires=exception-handling for setjmp/longjmp); NNUE weights embedded via C23 #embed; no Syzygy tablebases or opening book.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Plain Magic Bitboards",
+      "group": "Board",
+      "implementation": "Plain 64-bit magic bitboards alongside an 8x8 piece mailbox."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Iterative deepening PVS with narrow initial aspiration windows and quiescence search."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Dynamic null-move pruning from depth 3 scaled by depth."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Precomputed depth/move-number reduction table alongside late move pruning up to depth 10."
+    },
+    {
+      "key": "Futility_Pruning",
+      "label": "Futility & Reverse Futility",
+      "group": "Search",
+      "implementation": "Depth-indexed futility and reverse futility pruning margins up to depth 7."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Quiescence verification pruning for weak positions up to depth 3."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Reduced capture search from depth 5 pruning clear beta cutoffs."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Exclusion search from depth 8 extending singular transposition-table moves."
+    },
+    {
+      "key": "History_Heuristic#CMHist",
+      "label": "Countermove & Follow-up History",
+      "group": "Ordering",
+      "implementation": "History, killer, and countermove ordering plus countermove and follow-up history pruning up to depth 3."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Bucketed Transposition Table",
+      "group": "Tables",
+      "implementation": "Three-entry transposition table buckets storing bounds, PV flags, depth, and best moves."
+    },
+    {
+      "key": "NNUE",
+      "label": "Embedded NNUE & Cache",
+      "group": "Evaluation",
+      "implementation": "Incrementally updated 768 -> 1024x2 -> 1 quantized NNUE paired with a 2 MB evaluation hash cache."
+    }
+  ]
+}

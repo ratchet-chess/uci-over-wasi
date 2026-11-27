@@ -1,0 +1,86 @@
+{
+  "date": "2020-07-14",
+  "year": 2020,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v19.0",
+  "cpwPage": "Stash",
+  "blurb": "Stash 19.0 is the July 2020 release of Morgan Houppin's C UCI chess engine, introducing staged move selection, butterfly history ordering, weighted king-zone attack evaluation, and rook-on-open-file patterns atop its PVS, NMP, razoring, futility pruning, and endgame framework. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper; Hash capped for 32-bit memory. Native bench uses a fixed 1 ms thread-startup wait, so comparison uses positions.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards for bishop and rook attack lookups."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Iterative deepening PVS with transposition-table cutoffs in main search and quiescence search."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Dynamic null-move pruning with zugzwang verification search."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Square-root reductions indexed by depth plus move count with full-depth re-search on fail-high."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring & Futility",
+      "group": "Search",
+      "implementation": "Razoring and futility pruning at shallow non-PV depths."
+    },
+    {
+      "key": "Move_Generation#Staged_Move_Generation",
+      "label": "Staged Move Picker",
+      "group": "Ordering",
+      "implementation": "Phased move selector yielding TT move, good captures, killers, quiet moves, and losing captures on demand."
+    },
+    {
+      "key": "History_Heuristic",
+      "label": "History & Killer Ordering",
+      "group": "Ordering",
+      "implementation": "Butterfly quiet history table alongside two killers per ply and SEE capture filtering."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Zobrist-indexed hash table caching search bounds, depths, and best moves."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Zone Attack",
+      "group": "Evaluation",
+      "implementation": "Weighted minor and major piece attacks against the opponent's king zone."
+    },
+    {
+      "key": "Rook_on_Open_File",
+      "label": "Rook File Patterns",
+      "group": "Evaluation",
+      "implementation": "Bonuses for rooks on open, semi-open, and opponent-queen files."
+    },
+    {
+      "key": "Mobility",
+      "label": "Piece Mobility & Pawns",
+      "group": "Evaluation",
+      "implementation": "Piece mobility, pawn structure terms, and specialized endgame evaluators."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Packed middlegame/endgame score pairs interpolated by remaining game phase."
+    }
+  ]
+}

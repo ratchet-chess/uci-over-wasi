@@ -1,0 +1,85 @@
+{
+  "date": "2024-08-22",
+  "year": 2024,
+  "originalAuthors": [
+    "Sam Roelants"
+  ],
+  "originalLanguage": "Rust",
+  "upstreamTag": "v1.10.0",
+  "blurb": "Simbelmyne 1.10 is a classical hand-crafted evaluation UCI chess engine written in Rust by Sam Roelants. It combines legal magic-bitboard move generation, modern selectivity (singular, double, triple, and negative extensions, multi-cut, and internal iterative reductions), continuation and correction histories, and a rich incremental classical evaluation. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build; uses magic bitboards (no x86 PEXT) and 32-bit usize adjustments for embedded LMR tables.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "Legal bitboard move generator using magic bitboards (with optional PEXT on native x86)."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Negamax PVS with iterative deepening, aspiration windows, check extensions, and improving flag."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Reduced-depth null-move pruning at non-PV nodes."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Precomputed LMR table combined with late move pruning, futility pruning, and SEE pruning."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility Pruning",
+      "group": "Search",
+      "implementation": "Static-evaluation beta pruning at shallow non-PV depths."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "Depth reduction when a searched node has no transposition table move."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular & Multi-Extensions",
+      "group": "Search",
+      "implementation": "Singular, double, triple, and negative extensions paired with multi-cut pruning."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Continuation & Correction History",
+      "group": "Ordering",
+      "implementation": "Threat-aware quiet history, 1-/2-/4-ply continuation histories, capture history, and pawn/non-pawn/material correction histories."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Hash table caching search bounds, best moves, and static evaluations."
+    },
+    {
+      "key": "Pawn_Hash_Table",
+      "label": "Pawn Structure Cache",
+      "group": "Tables",
+      "implementation": "Dedicated pawn-structure cache storing isolated, protected, phalanx, and passed-pawn terms."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered HCE",
+      "group": "Evaluation",
+      "implementation": "Incrementally updated classical evaluation covering PSQTs, outposts, mobility with pins, threats, passed pawns, and endgame scaling."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Safety",
+      "group": "Evaluation",
+      "implementation": "King-zone attacks, virtual mobility, pawn shield/storm, and safe/unsafe check scoring."
+    }
+  ]
+}

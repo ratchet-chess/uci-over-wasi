@@ -1,0 +1,86 @@
+{
+  "date": "2020-12-06",
+  "year": 2020,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v25.0",
+  "cpwPage": "Stash",
+  "blurb": "Stash 25.0 is the December 2020 release of Morgan Houppin's C UCI chess engine, adding Lazy SMP natively, check extensions, internal iterative reductions, a precomputed 2D LMR reduction table, and tuned futility pruning and evaluation weights. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper (Threads fixed to 1); Hash capped for 32-bit memory.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards for sliding-piece attack generation."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Iterative deepening PVS with quiescent capture search and TT cutoffs."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Depth- and eval-scaled null-move pruning with zugzwang verification search."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "Reduces depth by one ply above depth 7 when no transposition-table move is present."
+    },
+    {
+      "key": "Check_Extensions",
+      "label": "Check Extensions",
+      "group": "Search",
+      "implementation": "Extends search depth by one ply on checking moves."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Table-Driven LMR",
+      "group": "Search",
+      "implementation": "Precomputed 2D depth/move-count reduction table for late quiet moves."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility & Razoring",
+      "group": "Search",
+      "implementation": "Tuned reverse futility pruning up to depth 8 and razoring up to depth 3."
+    },
+    {
+      "key": "History_Heuristic",
+      "label": "Quiet History & Killers",
+      "group": "Ordering",
+      "implementation": "Gravity-style quiet history updates paired with killers, TT move, MVV-LVA, and SEE."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Shared Zobrist-indexed hash table storing search bounds, depths, and best moves."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Zone Attack",
+      "group": "Evaluation",
+      "implementation": "Piece-weighted attacks on the safe king zone combined with pawn structure."
+    },
+    {
+      "key": "Space",
+      "label": "Space & Mobility",
+      "group": "Evaluation",
+      "implementation": "Safe-square mobility, open-file rooks, central space, and specialized endgame evaluators."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Tuned middlegame/endgame score pairs interpolated smoothly by game phase."
+    }
+  ]
+}

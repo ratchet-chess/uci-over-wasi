@@ -1,0 +1,68 @@
+{
+  "date": "2020-03-11",
+  "year": 2020,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v11",
+  "cpwPage": "Stash",
+  "blurb": "Stash 11.0.1 is the March 2020 release of Morgan Houppin's C UCI chess engine that introduces a transposition table and quiescence search over tactical moves. Built on magic bitboards, Zobrist hashing, iterative deepening PVS, hash-move and MVV-LVA ordering, and a tapered piece-square evaluation. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper; Hash capped for 32-bit memory.",
+  "features": [
+    {
+      "key": "Bitboards",
+      "label": "Bitboards",
+      "group": "Board",
+      "implementation": "64-bit piece-type and color bitboards with legal move generation."
+    },
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards with precomputed sliding-piece lookup tables."
+    },
+    {
+      "key": "Iterative_Deepening",
+      "label": "Iterative Deepening",
+      "group": "Search",
+      "implementation": "Depth-by-depth root search tracking selective depth through quiescence."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Negamax principal variation search using zero-window probes and re-searches on fail-high."
+    },
+    {
+      "key": "Quiescence_Search",
+      "label": "Quiescence Search",
+      "group": "Search",
+      "implementation": "Horizon search over unstable moves (captures, promotions, and evasions) with stand-pat cutoffs."
+    },
+    {
+      "key": "Hash_Move",
+      "label": "Hash Move Ordering",
+      "group": "Ordering",
+      "implementation": "Prioritizes transposition-table best moves ahead of MVV-LVA captures and PSQT-scored quiets."
+    },
+    {
+      "key": "MVV-LVA",
+      "label": "MVV-LVA",
+      "group": "Ordering",
+      "implementation": "Orders captures and promotions by victim and attacker value."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Zobrist-indexed hash table storing search bounds, depths, and best moves across iterations."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered PSQT Eval",
+      "group": "Evaluation",
+      "implementation": "Incrementally maintained middlegame and endgame piece-square scores interpolated by remaining pieces."
+    }
+  ]
+}

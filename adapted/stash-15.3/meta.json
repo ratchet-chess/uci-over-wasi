@@ -1,0 +1,86 @@
+{
+  "date": "2020-05-08",
+  "year": 2020,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v15.3",
+  "cpwPage": "Stash",
+  "blurb": "Stash 15.3 is the May 2020 release of Morgan Houppin's C UCI chess engine, expanding both search and evaluation with razoring, futility pruning, killer move ordering, square-root LMR, pawn structure, piece mobility, and dedicated elementary endgame evaluators (KQK, KRK, KBBK, KBNK, KQKR, KQKM, KRBK). Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper; Hash capped for 32-bit memory. Native bench uses a fixed 1 ms thread-startup wait, so comparison uses positions.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards for sliding-piece attack generation."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Negamax PVS with iterative deepening and transposition-table cutoffs in main and quiescence search."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Null-move pruning with zugzwang verification search."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Shallow-depth quiescence verification pruning for positions well below alpha."
+    },
+    {
+      "key": "Futility_Pruning",
+      "label": "Futility Pruning",
+      "group": "Search",
+      "implementation": "Static-evaluation pruning margins at shallow non-PV depths."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Depth-scaled square-root reductions on late moves with re-search on fail-high."
+    },
+    {
+      "key": "Killer_Heuristic",
+      "label": "Killer Moves",
+      "group": "Ordering",
+      "implementation": "Two killer slots per ply prioritized alongside TT move, MVV-LVA captures, and SEE."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Zobrist-indexed hash table probed in both main search and quiescence search."
+    },
+    {
+      "key": "Pawn_Structure",
+      "label": "Pawn Structure",
+      "group": "Evaluation",
+      "implementation": "Evaluates isolated, doubled, backward, and passed pawns."
+    },
+    {
+      "key": "Mobility",
+      "label": "Piece Mobility",
+      "group": "Evaluation",
+      "implementation": "Counts attackable mobility squares for minor and major pieces."
+    },
+    {
+      "key": "Draw_Evaluation",
+      "label": "Endgame Evaluators",
+      "group": "Evaluation",
+      "implementation": "Dedicated draw recognizers and mop-up evaluators for KQK, KRK, KBBK, KBNK, KQKR, KQKM, and KRBK."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Packed middlegame/endgame score pairs interpolated smoothly by game phase."
+    }
+  ]
+}

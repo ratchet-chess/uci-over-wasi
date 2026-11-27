@@ -1,0 +1,85 @@
+{
+  "date": "2017-09-08",
+  "year": 2017,
+  "originalAuthors": [
+    "Alexandru Moșoi"
+  ],
+  "originalLanguage": "Go",
+  "cpwPage": "Zurichess",
+  "blurb": "Zurichess Neuchâtel is the September 2017 stable release of Alexandru Moșoi's BSD-licensed Go chess engine and library, whose versions are named alphabetically after Swiss cantons. It pairs fancy magic bitboards and a classical tapered evaluation tuned with Texel's method and TensorFlow with fail-soft PVS, SEE-guided late move reductions and leaf pruning, razoring, and countermove ordering. Adapted to UCI over WASI using Go's wasip1/wasm target and the Go poll helper.",
+  "fidelityNotes": "Single-threaded Go wasip1/wasm build running the search on the UCI goroutine via the Go poll helper; Hash capped at 1024 MB for 32-bit memory.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Fancy Magic Bitboards",
+      "group": "Board",
+      "implementation": "Fancy 64-bit magic bitboards with De Bruijn bitscan serialization."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "Fail-Soft PVS",
+      "group": "Search",
+      "implementation": "Fail-soft negamax PVS with iterative deepening, aspiration windows, and mate-distance pruning."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Reduced-depth null-move pruning at non-PV nodes."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "SEE-Based LMR",
+      "group": "Search",
+      "implementation": "Late move reductions incorporating static exchange evaluation (SEE) and move depth."
+    },
+    {
+      "key": "Futility_Pruning",
+      "label": "Futility & Leaf Pruning",
+      "group": "Search",
+      "implementation": "Frontier futility pruning combined with SEE-based and history-based leaf pruning."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Depth-1 razoring dropping weak positions directly into quiescence search."
+    },
+    {
+      "key": "Check_Extensions",
+      "label": "Check Extensions",
+      "group": "Search",
+      "implementation": "One-ply search extension when the side to move is in check."
+    },
+    {
+      "key": "Quiescence_Search",
+      "label": "Quiescence Search",
+      "group": "Search",
+      "implementation": "Capture search with transposition table probing and SEE pruning of losing captures."
+    },
+    {
+      "key": "Countermove_Heuristic",
+      "label": "Countermove & History",
+      "group": "Ordering",
+      "implementation": "Countermove heuristic, killers, MVV-LVA, and an approximate-LRU hashed history table."
+    },
+    {
+      "key": "Pawn_Hash_Table",
+      "label": "Pawn Cache",
+      "group": "Tables",
+      "implementation": "Cached pawn-structure evaluation covering connected, isolated, doubled, passed, and rammed pawns plus pawn shelter."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Automated-tuned middlegame/endgame evaluation with material, PSQTs, mobility, attacks, and open-file rooks."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Safety",
+      "group": "Evaluation",
+      "implementation": "Toga-style king-zone attack evaluation combined with pawn shield and king-queen tropism."
+    }
+  ]
+}

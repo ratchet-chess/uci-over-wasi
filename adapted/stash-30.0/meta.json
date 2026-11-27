@@ -1,0 +1,86 @@
+{
+  "date": "2021-04-30",
+  "year": 2021,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v30.0",
+  "cpwPage": "Stash",
+  "blurb": "Stash 30.0 is the April 2021 release of Morgan Houppin's C UCI chess engine, following a major codebase consolidation. It adds aspiration windows, singular extensions, improving-scaled late move pruning, countermove and continuation histories, a pawn hash table, a KPK bitbase, and outpost evaluation. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper (Threads fixed to 1); Hash capped for 32-bit memory.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards (with optional BMI2 PEXT on native x86)."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS & Aspiration Windows",
+      "group": "Search",
+      "implementation": "Iterative deepening PVS with root aspiration windows and improving-flag heuristics."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Dynamic null-move pruning with zugzwang verification search."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Precomputed LMR table adjusted by improving status and quiet move history."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Late Move Pruning",
+      "group": "Search",
+      "implementation": "Improving-scaled move-count pruning up to depth 5 alongside reverse futility pruning and razoring."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Excluded-move search from depth 9 extending singular transposition-table moves."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Continuation & Countermove History",
+      "group": "Ordering",
+      "implementation": "Butterfly history paired with countermove heuristic, continuation histories, killers, and SEE."
+    },
+    {
+      "key": "Pawn_Hash_Table",
+      "label": "Pawn Hash Table",
+      "group": "Tables",
+      "implementation": "Dedicated pawn-structure cache storing passed, isolated, doubled, and backward pawn terms."
+    },
+    {
+      "key": "Endgame_Bitbases",
+      "label": "KPK Bitbase",
+      "group": "Tables",
+      "implementation": "Exact precomputed king-and-pawn versus king win/draw bitbase."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Safety",
+      "group": "Evaluation",
+      "implementation": "Weighted attacks on the enemy king zone with shelter and open-file rook pressure."
+    },
+    {
+      "key": "Outposts",
+      "label": "Outposts & Mobility",
+      "group": "Evaluation",
+      "implementation": "Minor-piece outposts, pawn-filtered mobility zones, space, and opposite-colored bishop scaling."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Packed middlegame/endgame score pairs with specialized KXK and endgame scaling."
+    }
+  ]
+}

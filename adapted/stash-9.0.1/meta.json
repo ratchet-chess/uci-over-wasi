@@ -1,0 +1,62 @@
+{
+  "date": "2020-02-27",
+  "year": 2020,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v9",
+  "cpwPage": "Stash",
+  "blurb": "Stash 9.0.1 is an early February 2020 release of Morgan Houppin's from-scratch C UCI chess engine, prior to its transposition table and quiescence search. It pairs magic bitboards and Zobrist hashing with iterative deepening principal variation search, MVV-LVA and piece-square move ordering, and a piece-count tapered piece-square evaluation with a castling-rights bonus. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper.",
+  "features": [
+    {
+      "key": "Bitboards",
+      "label": "Bitboards",
+      "group": "Board",
+      "implementation": "64-bit piece-type and color bitboards with legal move generation."
+    },
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards with precomputed bishop and rook attack tables."
+    },
+    {
+      "key": "Zobrist_Hashing",
+      "label": "Zobrist Hashing",
+      "group": "Tables",
+      "implementation": "Incremental 64-bit Zobrist position keys used for repetition detection."
+    },
+    {
+      "key": "Iterative_Deepening",
+      "label": "Iterative Deepening",
+      "group": "Search",
+      "implementation": "Depth-by-depth root search with basic time allocation and node-count limits."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Negamax alpha-beta search using zero-window probes after the first move with full-window re-searches."
+    },
+    {
+      "key": "MVV-LVA",
+      "label": "MVV-LVA & PSQT Ordering",
+      "group": "Ordering",
+      "implementation": "Static move scoring ordering promotions, captures by MVV-LVA, castling, and quiet moves by PSQT delta."
+    },
+    {
+      "key": "Piece-Square_Tables",
+      "label": "Piece-Square Tables",
+      "group": "Evaluation",
+      "implementation": "Incrementally maintained packed middlegame and endgame piece-square score pairs."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Linear interpolation between middlegame and endgame scores by total piece count, plus a castling-rights bonus."
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "date": "2020-09-28",
+  "year": 2020,
+  "originalAuthors": [
+    "Morgan Houppin"
+  ],
+  "originalLanguage": "C",
+  "upstreamTag": "v21.0",
+  "cpwPage": "Stash",
+  "blurb": "Stash 21.0 is the September 2020 release of Morgan Houppin's C UCI chess engine, adding space evaluation, safe-square king-zone filtering, refined linear LMR, and a deterministic built-in benchmark. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build using the C poll helper; Hash capped for 32-bit memory.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "64-bit magic bitboards for sliding-piece attack generation."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Iterative deepening PVS with transposition-table probing in main search and quiescence search."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Dynamic null-move pruning with zugzwang verification search."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Linear depth-plus-move-count reductions on late moves with re-search on fail-high."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility & Razoring",
+      "group": "Search",
+      "implementation": "Static-evaluation beta pruning and shallow razoring on non-PV nodes."
+    },
+    {
+      "key": "History_Heuristic",
+      "label": "History & Killer Ordering",
+      "group": "Ordering",
+      "implementation": "Quiet history table combined with killers, TT move, MVV-LVA, and SEE."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Zobrist-indexed hash table caching search bounds, depths, and best moves."
+    },
+    {
+      "key": "King_Safety#Attacking_King_Zone",
+      "label": "King Zone Attack",
+      "group": "Evaluation",
+      "implementation": "Weighted attacks on opponent king-zone squares excluding pawn-defended squares."
+    },
+    {
+      "key": "Space",
+      "label": "Space Evaluation",
+      "group": "Evaluation",
+      "implementation": "Evaluates safe central space controlled behind friendly pawns."
+    },
+    {
+      "key": "Rook_on_Open_File",
+      "label": "Rook File Patterns",
+      "group": "Evaluation",
+      "implementation": "Bonuses for rooks on open, semi-open, and opponent-queen files."
+    },
+    {
+      "key": "Mobility",
+      "label": "Mobility & Endgames",
+      "group": "Evaluation",
+      "implementation": "Safe-square piece mobility, pawn structure evaluation, and specialized endgame recognizers."
+    },
+    {
+      "key": "Tapered_Eval",
+      "label": "Tapered Eval",
+      "group": "Evaluation",
+      "implementation": "Packed middlegame/endgame score pairs interpolated smoothly by game phase."
+    }
+  ]
+}

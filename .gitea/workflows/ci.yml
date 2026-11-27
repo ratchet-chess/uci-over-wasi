@@ -24,6 +24,9 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
+      - name: Adapted engine metadata
+        run: bun tools/meta.ts --all --check
+
       - name: wasi-sdk
         run: tools/toolchains.sh fetch wasi-sdk && tools/toolchains.sh unpack wasi-sdk
 

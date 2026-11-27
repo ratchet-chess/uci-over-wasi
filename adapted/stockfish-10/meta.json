@@ -20,7 +20,7 @@
       "kind": "rating"
     }
   ],
-  "fidelityNotes": "No Syzygy tablebases (no filesystem in WASI); runs single-threaded unless the page is cross-origin isolated.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build (Threads fixed to 1); no Syzygy tablebases (no filesystem in WASI).",
   "features": [
     {
       "key": "Bitboards",
