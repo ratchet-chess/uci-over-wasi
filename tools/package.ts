@@ -104,7 +104,7 @@ if (explicitLicense && !existsSync(explicitLicense)) {
 }
 const foundLicense = explicitLicense ?? findUpstreamLicense(treeDir);
 let licenseBody: string;
-if (foundLicense && existsSync(foundLicense)) {
+if (foundLicense) {
   licenseBody = readFileSync(foundLicense, "utf8");
 } else if (isCopyleft(pin.license) && existsSync(join(root, "adapted/COPYING"))) {
   licenseBody = readFileSync(join(root, "adapted/COPYING"), "utf8");
@@ -123,6 +123,14 @@ const licenseHeader = [
   "---",
   "",
 ].join("\n");
+
+const withSource = isCopyleft(pin.license) && !noSource;
+const editedDir = join(workDir, "edited");
+if (withSource && !existsSync(editedDir)) {
+  throw new Error(
+    `copyleft engine ${id} (${pin.license}) requires patched source at ${editedDir} for Corresponding Source; run tools/adapted.sh check adapted/${id} first (or pass --no-source for local smoke tests)`,
+  );
+}
 
 const outBase = resolve(opt("--out") ?? join(root, "tmp/dist"));
 const outDir = join(outBase, id);
@@ -143,14 +151,9 @@ packaged.push(metaName);
 writeFileSync(join(outDir, licenseName), `${licenseHeader}${licenseBody.trimEnd()}\n`);
 packaged.push(licenseName);
 
-// Bundle Corresponding Source for GPL/LGPL/AGPL engines
-if (isCopyleft(pin.license) && !noSource) {
-  const editedDir = join(workDir, "edited");
-  if (!existsSync(editedDir)) {
-    throw new Error(
-      `copyleft engine ${id} (${pin.license}) requires patched source at ${editedDir} for Corresponding Source; run tools/adapted.sh check adapted/${id} first (or pass --no-source for local smoke tests)`,
-    );
-  }
+// Corresponding Source for GPL/LGPL/AGPL engines: the edited tree, the folder, the helper, and the scripts and
+// toolchain pins that give build.sh its environment
+if (withSource) {
   const stageRoot = join(outBase, `.stage-${id}`);
   const stageDir = join(stageRoot, `${id}-source`);
   rmSync(stageRoot, { recursive: true, force: true });
@@ -165,6 +168,9 @@ if (isCopyleft(pin.license) && !noSource) {
     });
     cpSync(absFolder, join(stageDir, "adapted", id), { recursive: true });
     cpSync(join(root, "helper"), join(stageDir, "helper"), { recursive: true });
+    for (const tool of ["adapted.sh", "toolchains.sh", "toolchains.txt"]) {
+      cpSync(join(root, "tools", tool), join(stageDir, "tools", tool));
+    }
     const cargoDir = join(workDir, "cargo");
     if (existsSync(cargoDir)) {
       cpSync(cargoDir, join(stageDir, "cargo"), { recursive: true });
