@@ -16,9 +16,11 @@ const START_MS = 30000;
 const HEAR_MS = 2000;
 /** how long a search runs before a check sends its line */
 const SEARCH_MS = 300;
+/** the longest a bench may run on one CPU */
+const BENCH_MS = 30 * 60 * 1000;
 /** a bounded search long enough that lines after it arrive while it runs, on most engines */
 const DEAF_GO = "go depth 10";
-/** a position with one legal move, a mate: an unbounded search of it ends by itself and must then wait for `stop` */
+/** a mate in one: an unbounded search of it finds the mate at once, and must still wait for `stop` */
 const MATE_IN_ONE = "position fen k7/8/1K6/8/8/8/8/7R w - - 0 1";
 
 /** one timed line written by a running module */
@@ -27,6 +29,7 @@ export type TimedLine = { text: string; at: number };
 /** one running session of the module under test, supplied by a driver */
 export interface CheckRun {
   readonly lines: TimedLine[];
+  /** writes `lines` to the module's stdin; returns the time they were sent, on performance.now()'s clock */
   send(...lines: string[]): number;
   /** ends the module's input */
   end(): void;
@@ -196,13 +199,9 @@ export async function runChecks(
   opts: CheckOptions = {},
   onResult?: (r: CheckResult) => void,
 ): Promise<CheckResult[]> {
-  const threadCount = opts.threadCount;
+  const { threadCount, benchNodes, benchArgs = ["bench"], only, signal } = opts;
   const { declaration: declared, features: used, spawns } = inspectModule(wasm, true, { threadCount });
   const profile = opts.profile ?? declared.profile;
-  const benchNodes = opts.benchNodes;
-  const benchArgs = opts.benchArgs ?? ["bench"];
-  const only = opts.only;
-  const signal = opts.signal;
 
   const active = new Set<CheckRun>();
   const spawnRun = (args?: string[]): CheckRun => {
@@ -239,9 +238,16 @@ export async function runChecks(
     return run;
   };
 
-  const quit = async (run: CheckRun): Promise<void> => {
+  const sendQuit = async (run: CheckRun): Promise<void> => {
     run.send("quit");
     await run.exit(HEAR_MS);
+  };
+
+  /** the move of the bestmove line at `i`, which must be Black's: it answers a position after 1. e4 */
+  const replyToE4 = (run: CheckRun, i: number, lost: string): string => {
+    const move = run.lines[i]!.text.split(" ")[1] ?? "";
+    if (!/^[a-h][78]/.test(move)) throw new Error(`${lost}: after 1. e4 the module played ${move}`);
+    return move;
   };
 
   const declaration = async (): Promise<string> => {
@@ -271,7 +277,7 @@ export async function runChecks(
     for (const open of [false, true]) {
       const run = spawnRun(benchArgs);
       if (!open) run.end();
-      await run.exit(30 * 60 * 1000);
+      await run.exit(BENCH_MS);
       if (!pattern.test(run.output())) {
         throw new Error(`no ${benchNodes} in the bench output with stdin ${open ? "open" : "at its end"}: ${run.output().trim().split("\n").slice(-2).join(" | ")}`);
       }
@@ -286,7 +292,7 @@ export async function runChecks(
     run.send("uci");
     await run.expect("uciok", START_MS);
     if (!run.lines.some((l) => /^option name Threads .*\bmax\s+([2-9]|\d\d)/i.test(l.text))) {
-      await quit(run);
+      await sendQuit(run);
       return "skipped: no Threads option above 1";
     }
     const from = run.lines.length;
@@ -296,7 +302,7 @@ export async function runChecks(
     const best = await run.expect("bestmove", START_MS, from);
     run.send("isready");
     await run.expect("readyok", HEAR_MS, best + 1);
-    await quit(run);
+    await sendQuit(run);
     return "with Threads 2 and every spawn refused, a bestmove and then readyok";
   };
 
@@ -309,8 +315,7 @@ export async function runChecks(
     await run.expect("readyok", START_MS);
     run.send(...cr("position startpos moves e2e4", "go depth 1"));
     const first = await run.expect("bestmove", START_MS);
-    const move = run.lines[first]!.text.split(" ")[1] ?? "";
-    if (!/^[a-h][78]/.test(move)) throw new Error(`the last move of the \`position\` line was lost: after 1. e4 the module played ${move}`);
+    const move = replyToE4(run, first, "the last move of the `position` line was lost");
     if (profile === "polls") {
       run.send(...cr("go infinite"));
       await sleep(SEARCH_MS, signal);
@@ -341,7 +346,7 @@ export async function runChecks(
       const i = await run.expect("bestmove", START_MS);
       run.send("isready");
       await run.expect("readyok", HEAR_MS, from);
-      await quit(run);
+      await sendQuit(run);
       return `bestmove after ${Math.round(run.lines[i]!.at - at)} ms`;
     },
 
@@ -353,9 +358,8 @@ export async function runChecks(
       const ready = await run.expect("readyok", HEAR_MS, from);
       if (ready < best) throw new Error("readyok came before the bestmove of the search sent ahead of it");
       const next = await run.expect("bestmove", HEAR_MS, best + 1);
-      const move = run.lines[next]!.text.split(" ")[1] ?? "";
-      await quit(run);
-      if (!/^[a-h][78]/.test(move)) throw new Error(`the queued \`position\` was lost: after 1. e4 the module played ${move}`);
+      const move = replyToE4(run, next, "the queued `position` was lost");
+      await sendQuit(run);
       return `bestmove, readyok, then the queued position's reply ${move}`;
     },
 
@@ -373,7 +377,7 @@ export async function runChecks(
       const run = await start();
       run.send("position startpos", "go depth 4");
       await run.expect("bestmove", START_MS);
-      await quit(run);
+      await sendQuit(run);
       return "exit after quit";
     },
 
@@ -384,7 +388,7 @@ export async function runChecks(
       await run.expect("bestmove", START_MS);
       run.send("stop", "isready");
       await run.expect("readyok", HEAR_MS, from);
-      await quit(run);
+      await sendQuit(run);
       return "the module answers after two stops";
     },
 
@@ -400,7 +404,7 @@ export async function runChecks(
       }
       run.send("isready");
       await run.expect("readyok", HEAR_MS, from);
-      await quit(run);
+      await sendQuit(run);
       return "bestmove 0000 for `go infinite` and for a bare `go`, then readyok";
     },
 
@@ -419,7 +423,7 @@ export async function runChecks(
       if (run.find("bestmove") >= 0) throw new Error("`go infinite` printed a bestmove before `stop`");
       const at = run.send("stop");
       const i = await run.expect("bestmove", HEAR_MS);
-      await quit(run);
+      await sendQuit(run);
       return `bestmove ${Math.round(run.lines[i]!.at - at)} ms after stop`;
     },
 
@@ -433,7 +437,7 @@ export async function runChecks(
       if (run.find("bestmove") >= 0) throw new Error("the search ended before `stop`");
       run.send("stop");
       await run.expect("bestmove", HEAR_MS);
-      await quit(run);
+      await sendQuit(run);
       return `readyok ${Math.round(run.lines[i]!.at - at)} ms after isready`;
     },
 
@@ -451,9 +455,8 @@ export async function runChecks(
       if (ready < best) throw new Error("readyok came before the bestmove");
       run.send("go depth 1");
       const next = await run.expect("bestmove", HEAR_MS, best + 1);
-      const move = run.lines[next]!.text.split(" ")[1] ?? "";
-      await quit(run);
-      if (!/^[a-h][78]/.test(move)) throw new Error(`the queued \`position\` was lost: after 1. e4 the module played ${move}`);
+      const move = replyToE4(run, next, "the queued `position` was lost");
+      await sendQuit(run);
       return `queued position applied, reply ${move}`;
     },
 
@@ -462,7 +465,7 @@ export async function runChecks(
       const open = spawnRun();
       let at = open.send(...lines);
       const openMs = open.lines[await open.expect("bestmove", START_MS)]!.at - at;
-      await quit(open);
+      await sendQuit(open);
       const run = spawnRun();
       at = run.send(...lines);
       run.end();
@@ -528,14 +531,14 @@ export async function runChecks(
       await run.expect("readyok", HEAR_MS, from);
       run.send("stop");
       await run.expect("bestmove", HEAR_MS);
-      await quit(run);
+      await sendQuit(run);
       return early ? "the module printed its bestmove before `stop`" : "bestmove held until `stop`";
     },
 
     async ponder() {
       const run = await start();
       if (!run.lines.some((l) => /^option name Ponder /i.test(l.text))) {
-        await quit(run);
+        await sendQuit(run);
         return "skipped: no Ponder option";
       }
       run.send("setoption name Ponder value true", "position startpos moves e2e4 e7e5", "go ponder wtime 3000 btime 3000");
@@ -547,7 +550,7 @@ export async function runChecks(
       await sleep(SEARCH_MS, signal);
       run.send("stop");
       await run.expect("bestmove", HEAR_MS, i + 1);
-      await quit(run);
+      await sendQuit(run);
       return `bestmove ${Math.round(run.lines[i]!.at - at)} ms after ponderhit; stop ends a ponder search`;
     },
 

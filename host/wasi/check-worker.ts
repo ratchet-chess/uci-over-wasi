@@ -140,7 +140,7 @@ if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
     const decl = declarationOf(wasm);
     const why = refusal(decl, canSpawn);
     if (why) throw new Error(why);
-    // ArrayBuffer copy ensures WebAssembly.validate/compile accept a non-shared buffer
+    // a structured-cloned view may sit at an offset in a larger buffer, so compile a copy of its bytes alone
     const buf = wasm.slice().buffer;
     if (!WebAssembly.validate(buf)) throw new Error("not a valid WebAssembly module");
     const module = await WebAssembly.compile(buf);
