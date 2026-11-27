@@ -41,13 +41,9 @@ class ProcessRun extends CheckSession {
       this.recordError(e.message);
       this.recordExit(1);
     });
-    // wait for close so stdout and stderr finish draining before recording exit
+    // close, not exit: stdout and stderr have drained by then. A last stdout line with no line feed is
+    // not a line (Part 1), so it is dropped, as the browser driver drops it
     this.child.on("close", (code) => {
-      this.partial += this.outDecoder.decode();
-      if (this.partial !== "") {
-        this.recordLine(this.partial);
-        this.partial = "";
-      }
       const errTail = this.errDecoder.decode();
       if (errTail !== "") this.recordStderr(errTail);
       this.recordExit(code);
