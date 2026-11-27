@@ -27,6 +27,9 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
+      - name: Unit tests
+        run: bun test
+
       - name: Adapted engine metadata
         run: bun tools/meta.ts --all --check
 

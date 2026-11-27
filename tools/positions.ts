@@ -27,25 +27,35 @@ function search(position: string): Promise<{ nodes: number; move: string }> {
   return new Promise((resolve, reject) => {
     const engine = spawn(command[0], command.slice(1), { stdio: ["pipe", "pipe", "ignore"] });
     const timer = setTimeout(() => { engine.kill("SIGKILL"); reject(new Error(`no bestmove in ${LIMIT_MS} ms: ${position}`)); }, LIMIT_MS);
+    const decoder = new TextDecoder();
     let text = "", nodes = 0, move = "";
+    const handleLine = (raw: string) => {
+      const line = raw.trim();
+      if (line === "readyok") engine.stdin.write(`go ${go}\n`);
+      const count = /^info .*\bnodes\s+(\d+)/.exec(line);
+      if (count) nodes = Number(count[1]);
+      if (line === "bestmove" || line.startsWith("bestmove ")) {
+        move = line.split(/\s+/)[1] ?? "";
+        engine.stdin.end("quit\n");
+      }
+    };
     engine.stdout.on("data", (chunk: Buffer) => {
-      text += chunk.toString();
+      text += decoder.decode(chunk, { stream: true });
       for (let end = text.indexOf("\n"); end >= 0; end = text.indexOf("\n")) {
-        const line = text.slice(0, end).trim();
+        handleLine(text.slice(0, end));
         text = text.slice(end + 1);
-        if (line === "readyok") engine.stdin.write(`go ${go}\n`);
-        const count = /^info .*\bnodes\s+(\d+)/.exec(line);
-        if (count) nodes = Number(count[1]);
-        if (line.startsWith("bestmove")) {
-          move = line.split(" ")[1] ?? "";
-          engine.stdin.end("quit\n");
-        }
       }
     });
-    engine.on("error", reject);
-    engine.on("close", () => {
+    engine.on("error", (err) => {
       clearTimeout(timer);
-      if (!move) reject(new Error(`the engine ended with no bestmove: ${position}`));
+      reject(err);
+    });
+    engine.on("close", (code) => {
+      clearTimeout(timer);
+      text += decoder.decode();
+      if (text !== "") handleLine(text);
+      if (code !== 0) reject(new Error(`the engine exited with ${code}: ${position}`));
+      else if (!move) reject(new Error(`the engine ended with no bestmove: ${position}`));
       else if (!nodes) reject(new Error(`the engine printed no node count: ${position}`));
       else resolve({ nodes, move });
     });

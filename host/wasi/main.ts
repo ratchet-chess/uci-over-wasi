@@ -44,23 +44,35 @@ export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new UR
     process.exit(1);
   }
   const ring = new Ring();
-  const base: ThreadData = { wasm, ring: ring.buffer, args, spawns: canSpawn, memory, ids: new SharedArrayBuffer(4), origin: performance.timeOrigin + performance.now() };
+  const origin = performance.timeOrigin + performance.now();
+  const ids = new SharedArrayBuffer(4);
   /** starts the engine's thread, or one it spawned; an exit or a trap on any of them ends the process */
-  const start = (data: ThreadData) => {
+  const start = (base: ThreadData, data: ThreadData) => {
     const worker = new Worker(thread, { workerData: data });
-    worker.on("message", (n: Note) => ("exit" in n ? process.exit(n.exit) : start({ ...base, tid: n.spawn, arg: n.arg })));
+    worker.on("message", (n: Note) => ("exit" in n ? process.exit(n.exit) : start(base, { ...base, tid: n.spawn, arg: n.arg })));
     worker.on("error", (e: Error) => {
       process.stderr.write(`engine error: ${e.stack ?? e}\n`);
       process.exit(1);
     });
   };
-  start(base);
+  // compile once on the main thread so spawned wasi-threads workers share the compiled module
+  void WebAssembly.compile(wasm as Uint8Array<ArrayBuffer>).then(
+    (module) => {
+      const base: ThreadData = { module, ring: ring.buffer, args, spawns: canSpawn, memory, ids, origin };
+      start(base, base);
+    },
+    (e: unknown) => {
+      process.stderr.write(`engine error: ${(e as Error).stack ?? e}\n`);
+      process.exit(1);
+    },
+  );
   if (profile === "polls") {
     process.stdin.on("data", (chunk: Buffer) => ring.push(chunk));
     process.stdin.on("end", () => ring.close());
     return;
   }
   // a deaf module: the lines its search could not act on are answered here, line by line
+  const decoder = new TextDecoder();
   let partial = "";
   const pass = (line: string) => {
     const answer = unheard(line, DEAF_REFUSAL);
@@ -68,13 +80,14 @@ export function runEngine(wasm: Uint8Array, args: string[], thread: URL = new UR
     else for (const a of answer) process.stdout.write(a + "\n");
   };
   process.stdin.on("data", (chunk: Buffer) => {
-    partial += chunk.toString();
+    partial += decoder.decode(chunk, { stream: true });
     for (let nl = partial.indexOf("\n"); nl >= 0; nl = partial.indexOf("\n")) {
       pass(partial.slice(0, nl));
       partial = partial.slice(nl + 1);
     }
   });
   process.stdin.on("end", () => {
+    partial += decoder.decode();
     if (partial !== "") pass(partial);
     ring.close();
   });

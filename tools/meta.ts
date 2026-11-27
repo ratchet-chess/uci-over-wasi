@@ -70,7 +70,7 @@ export interface EngineMeta {
   probe?: ProbeHint;
 }
 
-interface PinFields {
+export interface PinFields {
   url: string;
   commit: string;
   license: string;
@@ -116,9 +116,9 @@ const SIDECAR_KEYS = new Set([
   "probe",
 ]);
 const LEAK_PATTERNS = [/<artifacts>/i, /\/mnt\//, /\/home\//, /\/work\//, /downloads\//];
-const REPO_URL = "https://github.com/ratchet-chess/uci-over-wasi";
+export const REPO_URL = "https://github.com/ratchet-chess/uci-over-wasi";
 
-function parsePin(path: string): PinFields {
+export function parsePin(path: string): PinFields {
   const fields: Record<string, string> = {};
   for (const raw of readFileSync(path, "utf8").split(/\r?\n/)) {
     const line = raw.trim();
@@ -126,11 +126,17 @@ function parsePin(path: string): PinFields {
     const eq = line.indexOf("=");
     if (eq < 0) continue;
     const k = line.slice(0, eq).trim();
-    const v = line.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+    let v = line.slice(eq + 1).trim();
+    if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) {
+      v = v.slice(1, -1);
+    }
     fields[k] = v;
   }
   for (const req of ["url", "commit", "license", "compare", "module"]) {
     if (!fields[req]) throw new Error(`${path}: missing ${req}`);
+  }
+  if (fields.compare === "bench" && (!fields.nodes || !/^\d+$/.test(fields.nodes))) {
+    throw new Error(`${path}: compare=bench requires numeric nodes`);
   }
   return {
     url: fields.url,
@@ -374,7 +380,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const check = args.includes("--check");
   const all = args.includes("--all");
   const outIdx = args.indexOf("--out");
-  const outPath = outIdx >= 0 ? args[outIdx + 1] : undefined;
+  let outPath: string | undefined;
+  if (outIdx >= 0) {
+    outPath = args[outIdx + 1];
+    if (!outPath || outPath.startsWith("--")) {
+      console.error("--out requires a path");
+      process.exit(2);
+    }
+  }
 
   if (all) {
     const adaptedDir = join(root, "adapted");

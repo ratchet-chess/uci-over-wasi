@@ -219,7 +219,7 @@ func Wait() int {
 		return heard
 	}
 	if inputReady(true) {
-		fill()
+		return Poll(true)
 	}
 	return handleLines(true)
 }

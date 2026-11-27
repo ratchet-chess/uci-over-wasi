@@ -42,6 +42,97 @@ export interface CheckRun {
   output(): string;
 }
 
+/** shared line-waiting and exit state for CheckDriver implementations */
+export abstract class CheckSession implements CheckRun {
+  readonly lines: TimedLine[] = [];
+  private readonly waiters: (() => void)[] = [];
+  protected stderr = "";
+  protected error = "";
+  protected code: number | null | undefined;
+
+  abstract send(...lines: string[]): number;
+  abstract end(): void;
+  abstract kill(): void;
+
+  protected wake(): void {
+    for (const w of this.waiters.splice(0)) w();
+  }
+
+  protected recordLine(text: string): void {
+    this.lines.push({ text: text.trimEnd(), at: performance.now() });
+    this.wake();
+  }
+
+  protected recordStderr(chunk: string): void {
+    this.stderr += chunk;
+    this.wake();
+  }
+
+  protected recordError(message: string): void {
+    this.error = message;
+    this.wake();
+  }
+
+  protected recordExit(code: number | null): void {
+    if (this.code === undefined) this.code = code;
+    this.wake();
+  }
+
+  private async until(done: () => boolean, ms: number): Promise<boolean> {
+    const end = performance.now() + ms;
+    while (!done()) {
+      const left = end - performance.now();
+      if (left <= 0) return false;
+      await new Promise<void>((resolve) => {
+        const onWake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          const i = this.waiters.indexOf(onWake);
+          if (i >= 0) this.waiters.splice(i, 1);
+          resolve();
+        }, left);
+        this.waiters.push(onWake);
+      });
+    }
+    return true;
+  }
+
+  find(word: string, from = 0): number {
+    for (let i = from; i < this.lines.length; i++) {
+      const text = this.lines[i]!.text;
+      if (text === word || text.startsWith(word + " ")) return i;
+    }
+    return -1;
+  }
+
+  async expect(word: string, ms: number, from = 0): Promise<number> {
+    await this.until(() => this.find(word, from) >= 0 || this.code !== undefined, ms);
+    const i = this.find(word, from);
+    if (i < 0) {
+      const detail = this.error || this.stderr.trim().split("\n").pop() || "";
+      throw new Error(
+        this.code !== undefined
+          ? `exited with ${this.code} before \`${word}\`${detail ? ": " + detail : ""}`
+          : `no \`${word}\` within ${ms} ms`,
+      );
+    }
+    return i;
+  }
+
+  async exit(ms: number): Promise<number | null> {
+    if (!(await this.until(() => this.code !== undefined, ms))) {
+      throw new Error(`still running ${ms} ms later`);
+    }
+    return this.code!;
+  }
+
+  output(): string {
+    return this.lines.map((l) => l.text).join("\n") + "\n" + this.stderr;
+  }
+}
+
 /** starts one fresh session of the module */
 export type CheckDriver = (opts: { args?: string[]; spawns: boolean }) => CheckRun;
 
@@ -105,16 +196,13 @@ export async function runChecks(
   opts: CheckOptions = {},
   onResult?: (r: CheckResult) => void,
 ): Promise<CheckResult[]> {
-  const declared = declarationOf(wasm);
-  const profile = opts.profile ?? declared.profile;
-  const used = featuresOf(wasm);
   const threadCount = opts.threadCount;
+  const { declaration: declared, features: used, spawns } = inspectModule(wasm, true, { threadCount });
+  const profile = opts.profile ?? declared.profile;
   const benchNodes = opts.benchNodes;
   const benchArgs = opts.benchArgs ?? ["bench"];
   const only = opts.only;
   const signal = opts.signal;
-  /** whether the host starts threads: not for a module that imports thread-spawn without requiring threads, unless --threads */
-  const spawns = !used.threadSpawn || declared.requires.includes("threads") || threadCount !== undefined;
 
   const active = new Set<CheckRun>();
   const spawnRun = (args?: string[]): CheckRun => {
@@ -178,14 +266,15 @@ export async function runChecks(
 
   const bench = async (): Promise<string> => {
     if (!benchNodes) return "skipped: no --bench";
+    const escaped = benchNodes.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(^|\\D)${escaped}(\\D|$)`);
     for (const open of [false, true]) {
       const run = spawnRun(benchArgs);
       if (!open) run.end();
       await run.exit(30 * 60 * 1000);
-      if (!new RegExp(`(^|\\D)${benchNodes}(\\D|$)`).test(run.output())) {
+      if (!pattern.test(run.output())) {
         throw new Error(`no ${benchNodes} in the bench output with stdin ${open ? "open" : "at its end"}: ${run.output().trim().split("\n").slice(-2).join(" | ")}`);
       }
-      run.end();
     }
     return `${benchNodes} nodes with stdin at its end and open`;
   };

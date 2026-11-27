@@ -13,57 +13,46 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { runChecks, type CheckDriver, type CheckRun, type TimedLine } from "../host/wasi/check.ts";
+import { CheckSession, runChecks, type CheckDriver } from "../host/wasi/check.ts";
 
 const HOST = fileURLToPath(new URL("../host/wasi/main.ts", import.meta.url));
 
-class ProcessRun implements CheckRun {
-  readonly lines: TimedLine[] = [];
+class ProcessRun extends CheckSession {
   private readonly child: ChildProcessWithoutNullStreams;
-  private readonly waiters: (() => void)[] = [];
+  private readonly outDecoder = new TextDecoder();
+  private readonly errDecoder = new TextDecoder();
   private partial = "";
-  private stderr = "";
-  private code: number | null | undefined;
 
   constructor(module: string, args: string[], spawns: boolean) {
+    super();
     this.child = spawn(process.execPath, [HOST, module, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...(spawns ? {} : { UCI_OVER_WASI_SPAWN: "0" }) },
     });
     this.child.stdout.on("data", (chunk: Buffer) => {
-      this.partial += chunk.toString();
+      this.partial += this.outDecoder.decode(chunk, { stream: true });
       for (let nl = this.partial.indexOf("\n"); nl >= 0; nl = this.partial.indexOf("\n")) {
-        this.lines.push({ text: this.partial.slice(0, nl).trimEnd(), at: performance.now() });
+        this.recordLine(this.partial.slice(0, nl));
         this.partial = this.partial.slice(nl + 1);
       }
-      this.wake();
     });
-    this.child.stderr.on("data", (chunk: Buffer) => (this.stderr += chunk.toString()));
-    this.child.on("exit", (code) => {
-      this.code = code;
-      this.wake();
+    this.child.stderr.on("data", (chunk: Buffer) => this.recordStderr(this.errDecoder.decode(chunk, { stream: true })));
+    this.child.on("error", (e: Error) => {
+      this.recordError(e.message);
+      this.recordExit(1);
+    });
+    // wait for close so stdout and stderr finish draining before recording exit
+    this.child.on("close", (code) => {
+      this.partial += this.outDecoder.decode();
+      if (this.partial !== "") {
+        this.recordLine(this.partial);
+        this.partial = "";
+      }
+      const errTail = this.errDecoder.decode();
+      if (errTail !== "") this.recordStderr(errTail);
+      this.recordExit(code);
     });
     this.child.stdin.on("error", () => {});
-  }
-
-  private wake(): void {
-    for (const w of this.waiters.splice(0)) w();
-  }
-
-  private async until(done: () => boolean, ms: number): Promise<boolean> {
-    const end = performance.now() + ms;
-    while (!done()) {
-      const left = end - performance.now();
-      if (left <= 0) return false;
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, left);
-        this.waiters.push(() => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
-    }
-    return true;
   }
 
   send(...lines: string[]): number {
@@ -75,51 +64,22 @@ class ProcessRun implements CheckRun {
     this.child.stdin.end();
   }
 
-  find(word: string, from = 0): number {
-    for (let i = from; i < this.lines.length; i++) {
-      if (this.lines[i].text === word || this.lines[i].text.startsWith(word + " ")) return i;
-    }
-    return -1;
-  }
-
-  async expect(word: string, ms: number, from = 0): Promise<number> {
-    await this.until(() => this.find(word, from) >= 0 || this.code !== undefined, ms);
-    const i = this.find(word, from);
-    if (i < 0) {
-      throw new Error(
-        this.code !== undefined
-          ? `exited with ${this.code} before \`${word}\`${this.stderr ? ": " + this.stderr.trim().split("\n").pop() : ""}`
-          : `no \`${word}\` within ${ms} ms`,
-      );
-    }
-    return i;
-  }
-
-  async exit(ms: number): Promise<number | null> {
-    if (!(await this.until(() => this.code !== undefined, ms))) {
-      throw new Error(`still running ${ms} ms later`);
-    }
-    return this.code!;
-  }
-
   kill(): void {
     if (this.code === undefined) this.child.kill("SIGKILL");
-  }
-
-  output(): string {
-    return this.lines.map((l) => l.text).join("\n") + "\n" + this.stderr;
   }
 }
 
 const argv = process.argv.slice(2);
 const flag = (name: string) => {
   const i = argv.indexOf(name);
-  return i < 0 ? undefined : argv.splice(i, 2)[1];
+  if (i < 0) return undefined;
+  if (i + 1 >= argv.length) throw new Error(`${name} requires a value`);
+  return argv.splice(i, 2)[1];
 };
 const asked = flag("--profile");
 if (asked !== undefined && asked !== "polls" && asked !== "deaf") throw new Error(`unknown profile ${asked}`);
 const benchNodes = flag("--bench");
-const benchArgs = (flag("--bench-args") ?? "bench").split(" ");
+const benchArgs = (flag("--bench-args") ?? "bench").trim().split(/\s+/).filter(Boolean);
 const only = flag("--only");
 const threadCount = flag("--threads");
 const module = argv[0];

@@ -35,7 +35,7 @@
  * last two, a wasi-threads build plays on one thread, and one that requires
  * threads is refused: its memory cannot reach a second worker.
  */
-import { DEAF_REFUSAL, NO_SPAWN, Queue, Ring, Script, canSuspend, declarationOf, nextThreadId, profileOf, refusal, runModule, runSuspending, runThread, sharedMemory, unheard, unthreaded } from "./wasi.ts";
+import { DEAF_REFUSAL, NO_SPAWN, Queue, Ring, Script, canSuspend, declarationOf, nextThreadId, refusal, runModule, runSuspending, runThread, sharedMemory, unheard, unthreaded, type Profile } from "./wasi.ts";
 
 /** the names of the nested workers this script runs as: the engine's thread, and a thread the engine spawned */
 const ENGINE_THREAD = "uci-over-wasi-engine";
@@ -55,8 +55,8 @@ type Start = {
   tid?: number;
   arg?: number;
 };
-/** what a nested worker posts the outer Worker: a line of output, a spawn to start, or the module's end */
-type Note = string | { spawn: number; arg: number } | { exit: number };
+/** what a nested worker posts the outer Worker: a line of output, a spawn to start, a finished thread, or the module's end */
+type Note = string | { spawn: number; arg: number } | { exit: number } | { done: true };
 
 /** the parts of a dedicated worker's global scope used here; the project's TypeScript lib is the DOM's */
 const scope = globalThis as unknown as {
@@ -73,16 +73,16 @@ const scope = globalThis as unknown as {
  * With `afterUciok`, it drops the lines up to the first `uciok`: the answer to a replayed `uci`.
  */
 function lineWriter(afterUciok = false): (fd: number, bytes: Uint8Array) => void {
-  const decoder = new TextDecoder();
+  const out = new TextDecoder();
+  const err = new TextDecoder();
   let partial = "";
   let dropping = afterUciok;
   return (fd, bytes) => {
-    const text = decoder.decode(bytes, { stream: true });
     if (fd === 2) {
-      console.error(text);
+      console.error(err.decode(bytes, { stream: true }));
       return;
     }
-    partial += text;
+    partial += out.decode(bytes, { stream: true });
     for (let nl = partial.indexOf("\n"); nl >= 0; nl = partial.indexOf("\n")) {
       const line = partial.slice(0, nl);
       partial = partial.slice(nl + 1);
@@ -104,23 +104,24 @@ const buildName = build.pathname.slice(build.pathname.lastIndexOf("/") + 1);
  * that declares a profile or a feature this host does not know, or a feature it lacks, fails here too:
  * `canSpawn` is whether this Worker starts threads.
  */
-async function fetchBuild(canSpawn: boolean): Promise<ArrayBuffer> {
+async function fetchBuild(canSpawn: boolean): Promise<{ wasm: ArrayBuffer; profile: Profile }> {
   const res = await fetch(build);
   if (!res.ok) throw new Error(`${buildName}: ${res.status} ${res.statusText}`);
   const wasm = await res.arrayBuffer();
-  const why = refusal(declarationOf(new Uint8Array(wasm)), canSpawn);
+  const declaration = declarationOf(new Uint8Array(wasm));
+  const why = refusal(declaration, canSpawn);
   if (why) throw new Error(`${buildName}: ${why}`);
   if (!WebAssembly.validate(wasm)) throw new Error(`${buildName} is not a WebAssembly module`);
-  return wasm;
+  return { wasm, profile: declaration.profile };
 }
 
 /**
  * Takes the page's lines for a build that hears its input, and gives each to
  * `push` as bytes. Lines that come before the build has loaded wait. Call the
- * returned function with the build's bytes once they are there: a deaf build's
+ * returned function with the build's profile once it is ready: a deaf build's
  * `stop` and unbounded `go` are then answered here and never pushed.
  */
-function feed(push: (bytes: Uint8Array) => void): (wasm: ArrayBuffer) => void {
+function feed(push: (bytes: Uint8Array) => void): (profile: Profile) => void {
   const encoder = new TextEncoder();
   /** lines that came before the build had loaded and its profile was known */
   let early: string[] | undefined = [];
@@ -134,8 +135,8 @@ function feed(push: (bytes: Uint8Array) => void): (wasm: ArrayBuffer) => void {
     if (early) early.push(String(e.data));
     else pass(String(e.data));
   };
-  return (wasm) => {
-    deaf = profileOf(new Uint8Array(wasm)) === "deaf";
+  return (profile) => {
+    deaf = profile === "deaf";
     for (const line of early!) pass(line);
     early = undefined;
   };
@@ -151,10 +152,11 @@ async function suspended(): Promise<void> {
   const queue = new Queue();
   const loaded = feed((bytes) => queue.push(bytes));
   try {
-    const wasm = await fetchBuild(false);
+    const { wasm, profile } = await fetchBuild(false);
     const module = await WebAssembly.compile(wasm);
-    loaded(wasm);
-    await runSuspending(module, queue, [buildName], lineWriter(), unthreaded(new Uint8Array(wasm)));
+    const threads = unthreaded(new Uint8Array(wasm));
+    loaded(profile);
+    await runSuspending(module, queue, [buildName], lineWriter(), threads);
   } catch (e) {
     scope.postMessage(`info string error: ${e}`);
   }
@@ -217,7 +219,7 @@ async function degraded(): Promise<void> {
   scope.postMessage("info string the page is not cross-origin isolated (COOP same-origin, COEP require-corp) and this browser has no JavaScript Promise Integration: stop is heard when a search ends, and the hash table is not kept between searches");
   try {
     // every build is run as a deaf one here; fetchBuild has refused a declaration this host cannot meet
-    const wasm = await fetchBuild(false);
+    const { wasm } = await fetchBuild(false);
     bytes = new Uint8Array(wasm);
     module = await WebAssembly.compile(wasm);
   } catch (e) {
@@ -254,7 +256,10 @@ if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
     }
     // a spawned thread that returns ends itself alone; any other end ends the module, and every thread
     if (code !== undefined) note({ exit: code });
-    else scope.close();
+    else {
+      note({ done: true });
+      scope.close();
+    }
   };
 } else if (!scope.crossOriginIsolated) {
   if (canSuspend()) void suspended();
@@ -262,19 +267,24 @@ if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
 } else {
   const ring = new Ring();
   const loaded = feed((bytes) => ring.push(bytes));
-  const workers: Worker[] = [];
+  const workers = new Set<Worker>();
+  let ended = false;
   const end = () => {
+    if (ended) return;
+    ended = true;
     for (const w of workers) w.terminate();
+    workers.clear();
     scope.close();
   };
   let base: Start | undefined;
   /** starts a nested worker, and relays what it posts */
   const start = (name: string, data: Start) => {
     const w = new Worker(script, { name });
-    workers.push(w);
+    workers.add(w);
     w.onmessage = (e: MessageEvent<Note>) => {
       const n = e.data;
       if (typeof n === "string") scope.postMessage(n);
+      else if ("done" in n) workers.delete(w);
       else if ("exit" in n) end();
       else start(SPAWNED_THREAD, { ...base!, tid: n.spawn, arg: n.arg });
     };
@@ -287,10 +297,11 @@ if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
   // a classic worker script has no top-level await
   void (async () => {
     try {
-      const wasm = await fetchBuild(true);
-      loaded(wasm);
+      const { wasm, profile } = await fetchBuild(true);
       const module = await WebAssembly.compile(wasm);
-      base = { module, memory: sharedMemory(new Uint8Array(wasm)), ring: ring.buffer, args: [buildName], ids: new SharedArrayBuffer(4), origin: performance.timeOrigin + performance.now() };
+      const memory = sharedMemory(new Uint8Array(wasm));
+      loaded(profile);
+      base = { module, memory, ring: ring.buffer, args: [buildName], ids: new SharedArrayBuffer(4), origin: performance.timeOrigin + performance.now() };
       start(ENGINE_THREAD, base);
     } catch (e) {
       scope.postMessage(`info string error: ${e}`);

@@ -66,11 +66,12 @@ class Reader {
   /** an unsigned LEB128 */
   u(): number {
     let value = 0;
-    for (let shift = 0; ; shift += 7) {
+    for (let shift = 0; shift <= 63; shift += 7) {
       const b = this.byte();
       value += (b & 0x7f) * 2 ** shift;
       if (b < 0x80) return value;
     }
+    throw new Error("invalid LEB128 in WebAssembly module");
   }
 
   /** a signed LEB128 of up to 64 bits, as a sign and a magnitude good enough to tell negative values apart */
@@ -79,6 +80,7 @@ class Reader {
     let shift = 0;
     let b: number;
     do {
+      if (shift > 63) throw new Error("invalid LEB128 in WebAssembly module");
       b = this.byte();
       value += (b & 0x7f) * 2 ** shift;
       shift += 7;
@@ -87,6 +89,7 @@ class Reader {
   }
 
   skip(n: number): void {
+    if (n < 0 || this.at + n > this.b.length) throw new Error("the module ends inside an instruction");
     this.at += n;
   }
 
@@ -127,9 +130,9 @@ export function featuresOf(wasm: Uint8Array): Features {
   const text = new TextDecoder();
   const name = () => {
     const n = r.u();
-    const s = text.decode(wasm.subarray(r.at, r.at + n));
+    const start = r.at;
     r.skip(n);
-    return s;
+    return text.decode(wasm.subarray(start, r.at));
   };
   /** memory limits: flags, then min and, if flag bit 0, max; bit 1 marks a shared memory */
   const limits = () => {
@@ -142,6 +145,7 @@ export function featuresOf(wasm: Uint8Array): Features {
     const id = r.byte();
     const size = r.u();
     const end = r.at + size;
+    if (end > wasm.length) throw new Error("truncated section in WebAssembly module");
     if (id === 2) {
       for (let n = r.u(); n > 0; n--) {
         const module = name();
@@ -171,6 +175,7 @@ export function featuresOf(wasm: Uint8Array): Features {
       for (let n = r.u(); n > 0; n--) {
         const bodySize = r.u();
         const bodyEnd = r.at + bodySize;
+        if (bodyEnd > end) throw new Error("truncated function body in WebAssembly module");
         for (let groups = r.u(); groups > 0; groups--) {
           r.u();
           r.valType();

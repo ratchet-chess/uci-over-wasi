@@ -17,34 +17,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildAdaptedMeta } from "./meta.ts";
-
-interface PinSummary {
-  url: string;
-  commit: string;
-  license: string;
-  module: string;
-}
-
-function readPin(pinPath: string): PinSummary {
-  const fields: Record<string, string> = {};
-  for (const raw of readFileSync(pinPath, "utf8").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq < 0) continue;
-    fields[line.slice(0, eq).trim()] = line.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
-  }
-  for (const req of ["url", "commit", "license", "module"]) {
-    if (!fields[req]) throw new Error(`${pinPath}: missing ${req}`);
-  }
-  return {
-    url: fields.url,
-    commit: fields.commit,
-    license: fields.license,
-    module: fields.module,
-  };
-}
+import { buildAdaptedMeta, parsePin, REPO_URL } from "./meta.ts";
 
 function isCopyleft(license: string): boolean {
   return /\b(?:A|L)?GPL\b/i.test(license);
@@ -88,7 +61,13 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const valueFlags = new Set(["--wasm", "--tree", "--license-file", "--out"]);
 const opt = (flag: string): string | undefined => {
   const idx = args.indexOf(flag);
-  return idx >= 0 ? args[idx + 1] : undefined;
+  if (idx < 0) return undefined;
+  const val = args[idx + 1];
+  if (!val || val.startsWith("--")) {
+    console.error(`${flag} requires a value`);
+    process.exit(2);
+  }
+  return val;
 };
 const noSource = args.includes("--no-source");
 const folder = args.find((a, i) => !a.startsWith("--") && !valueFlags.has(args[i - 1] ?? ""));
@@ -99,7 +78,7 @@ const id = basename(absFolder);
 const pinPath = join(absFolder, "pin");
 if (!existsSync(pinPath)) throw new Error(`no pin file at ${pinPath}`);
 
-const pin = readPin(pinPath);
+const pin = parsePin(pinPath);
 const workDir = join(root, "tmp/adapted", id);
 const wasmSrc = resolve(opt("--wasm") ?? join(workDir, "out", pin.module));
 if (!existsSync(wasmSrc)) {
@@ -120,6 +99,9 @@ const treeDir = opt("--tree")
     ? join(workDir, "repo")
     : join(workDir, "edited");
 const explicitLicense = opt("--license-file") ? resolve(opt("--license-file")!) : undefined;
+if (explicitLicense && !existsSync(explicitLicense)) {
+  throw new Error(`--license-file not found: ${explicitLicense}`);
+}
 const foundLicense = explicitLicense ?? findUpstreamLicense(treeDir);
 let licenseBody: string;
 if (foundLicense && existsSync(foundLicense)) {
@@ -136,7 +118,7 @@ const licenseHeader = [
   `Engine: ${id}`,
   `Upstream: ${pin.url} (commit ${pin.commit})`,
   `License: ${pin.license}`,
-  `Adaptation: https://github.com/ratchet-chess/uci-over-wasi/tree/main/adapted/${id}`,
+  `Adaptation: ${REPO_URL}/tree/main/adapted/${id}`,
   "",
   "---",
   "",
@@ -172,27 +154,30 @@ if (isCopyleft(pin.license) && !noSource) {
   const stageRoot = join(outBase, `.stage-${id}`);
   const stageDir = join(stageRoot, `${id}-source`);
   rmSync(stageRoot, { recursive: true, force: true });
-  mkdirSync(stageDir, { recursive: true });
-  cpSync(editedDir, join(stageDir, "src"), {
-    recursive: true,
-    filter: (p) => {
-      const name = basename(p);
-      return name !== ".git" && name !== "target" && !name.endsWith(".o") && !name.endsWith(".wasm");
-    },
-  });
-  cpSync(absFolder, join(stageDir, "adapted", id), { recursive: true });
-  cpSync(join(root, "helper"), join(stageDir, "helper"), { recursive: true });
-  const cargoDir = join(workDir, "cargo");
-  if (existsSync(cargoDir)) {
-    cpSync(cargoDir, join(stageDir, "cargo"), { recursive: true });
+  try {
+    mkdirSync(stageDir, { recursive: true });
+    cpSync(editedDir, join(stageDir, "src"), {
+      recursive: true,
+      filter: (p) => {
+        const name = basename(p);
+        return name !== ".git" && name !== "target" && !name.endsWith(".o") && !name.endsWith(".wasm");
+      },
+    });
+    cpSync(absFolder, join(stageDir, "adapted", id), { recursive: true });
+    cpSync(join(root, "helper"), join(stageDir, "helper"), { recursive: true });
+    const cargoDir = join(workDir, "cargo");
+    if (existsSync(cargoDir)) {
+      cpSync(cargoDir, join(stageDir, "cargo"), { recursive: true });
+    }
+    writeFileSync(join(stageDir, "LICENSE.txt"), `${licenseHeader}${licenseBody.trimEnd()}\n`);
+    const sourceName = `${id}-source.tar.gz`;
+    execFileSync("tar", ["-czf", join(outDir, sourceName), "-C", stageRoot, `${id}-source`], {
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    packaged.push(sourceName);
+  } finally {
+    rmSync(stageRoot, { recursive: true, force: true });
   }
-  writeFileSync(join(stageDir, "LICENSE.txt"), `${licenseHeader}${licenseBody.trimEnd()}\n`);
-  const sourceName = `${id}-source.tar.gz`;
-  execFileSync("tar", ["-czf", join(outDir, sourceName), "-C", stageRoot, `${id}-source`], {
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  rmSync(stageRoot, { recursive: true, force: true });
-  packaged.push(sourceName);
 }
 
 const sums = packaged.map((name) => `${sha256(join(outDir, name))}  ${name}`).join("\n") + "\n";

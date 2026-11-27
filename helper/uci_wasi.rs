@@ -80,20 +80,24 @@ thread_local! {
     static INPUT: RefCell<Input> = RefCell::new(Input::default());
 }
 
+/// 8-byte aligned buffer for WASI preview-1 subscription and event structs.
+#[repr(C, align(8))]
+struct Aligned<const N: usize>([u8; N]);
+
 /// Whether stdin has bytes, or its end, to read; waits for that when `wait` is set.
 fn input_ready(wait: bool) -> bool {
-    let mut subs = [0u8; 96];
-    subs[0] = 1; // userdata 1: stdin
-    subs[8] = EVENT_FD_READ;
+    let mut subs = Aligned([0u8; 96]);
+    subs.0[0] = 1; // userdata 1: stdin
+    subs.0[8] = EVENT_FD_READ;
     // a second subscription, a clock with a zero relative timeout: the call returns at once
-    subs[48] = 2;
-    subs[64..68].copy_from_slice(&CLOCK_MONOTONIC.to_le_bytes());
-    let mut events = [0u8; 64];
+    subs.0[48] = 2;
+    subs.0[64..68].copy_from_slice(&CLOCK_MONOTONIC.to_le_bytes());
+    let mut events = Aligned([0u8; 64]);
     let mut n = 0u32;
-    if unsafe { poll_oneoff(subs.as_ptr(), events.as_mut_ptr(), if wait { 1 } else { 2 }, &mut n) } != 0 {
+    if unsafe { poll_oneoff(subs.0.as_ptr(), events.0.as_mut_ptr(), if wait { 1 } else { 2 }, &mut n) } != 0 {
         return false;
     }
-    (0..n as usize).any(|i| events[32 * i] == 1)
+    (0..n as usize).any(|i| events.0[32 * i] == 1)
 }
 
 impl Input {
@@ -190,7 +194,7 @@ pub fn wait() -> u32 {
             return heard;
         }
         if input_ready(true) {
-            input.fill();
+            return input.poll(true);
         }
         input.handle_lines(true)
     })

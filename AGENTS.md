@@ -30,11 +30,13 @@ where, ask the user.
 - `tools/positions.ts`: a build's moves and node counts over a position file.
 - `tools/toolchains.sh` and `tools/toolchains.txt`: the pinned toolchains.
 - `tools/vendor.ts`: copies the host into another repo.
+- `test/`: unit tests for `host/wasi/` and `tools/`.
 - `adapted/<engine>-<version>/`: one adapted engine.
 
 ```sh
 bun install
 bun run typecheck
+bun test
 tools/toolchains.sh fetch && tools/toolchains.sh unpack   # the pinned toolchains, into tmp/toolchains/
 tools/adapted.sh echo                                     # the helper and the checker, on the smallest module
 tools/adapted.sh fetch adapted/<folder>                   # the engine's source at its pin; needs network

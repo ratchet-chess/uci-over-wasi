@@ -37,6 +37,12 @@ jobs:
       - name: Validate adapted engine folder
         id: meta
         run: |
+          case "$ENGINE" in
+            ""|*/*|*..*)
+              echo "invalid engine id: $ENGINE" >&2
+              exit 1
+              ;;
+          esac
           if [ ! -f "adapted/$ENGINE/pin" ] || [ ! -f "adapted/$ENGINE/meta.json" ]; then
             echo "adapted/$ENGINE is missing pin or meta.json" >&2
             exit 1
@@ -107,11 +113,8 @@ jobs:
         with:
           name: adapted-${{ env.ENGINE }}
           path: |
-            dist/${{ env.ENGINE }}/${{ env.ENGINE }}.wasm
-            dist/${{ env.ENGINE }}/${{ env.ENGINE }}.meta.json
-            dist/${{ env.ENGINE }}/${{ env.ENGINE }}-LICENSE.txt
-            dist/${{ env.ENGINE }}/${{ env.ENGINE }}-source.tar.gz
-            dist/${{ env.ENGINE }}/SHA256SUMS
+            dist/${{ env.ENGINE }}/*
+            !dist/${{ env.ENGINE }}/RELEASE_NOTES.md
 
       - name: Publish GitHub release
         if: env.PUBLISH == 'true'

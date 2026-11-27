@@ -12,7 +12,7 @@ import { NO_SPAWN, Ring, nextThreadId, runModule, runThread } from "./wasi.ts";
 
 /** what main.ts gives a thread */
 export type ThreadData = {
-  wasm: Uint8Array;
+  module: WebAssembly.Module;
   ring: SharedArrayBuffer;
   args: string[];
   /** false for a host that starts no thread: thread-spawn fails (wasi.ts NO_SPAWN) */
@@ -53,7 +53,7 @@ function run(module: WebAssembly.Module): number | undefined {
 
 let code: number | undefined = 1;
 try {
-  code = run(await WebAssembly.compile(data.wasm as Uint8Array<ArrayBuffer>));
+  code = run(data.module);
 } catch (e) {
   process.stderr.write(`${data.tid === undefined ? "engine" : `thread ${data.tid}`} error: ${(e as Error).stack ?? e}\n`);
 }

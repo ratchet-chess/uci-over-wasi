@@ -26,7 +26,7 @@ General Public License, version 3, and `adapted/COPYING` has its text.
 | `helper/` | The poll helper, in C, Rust and Go, and the how-to for adapting an engine |
 | `host/wasi/` | The reference host, under Bun and Node and in a page |
 | `tools/wasi-check.ts` | The checker: a module's handling of input during a search |
-| `adapted/` | Adapted engines, each a pin file, a patch and a build script |
+| `adapted/` | Adapted engines, each a pin file, a patch, a build script, and provenance metadata |
 
 ## For an engine's author
 

@@ -101,7 +101,7 @@ case "$cmd" in
       bench)
         # $bench_args is split into words on purpose
         "$work/out/native" $bench_args < /dev/null > "$work/out/native-bench.txt" 2>&1 || true
-        grep -q "\b$nodes\b" "$work/out/native-bench.txt" \
+        grep -qE "(^|[^0-9])$nodes([^0-9]|$)" "$work/out/native-bench.txt" \
           || { tail -5 "$work/out/native-bench.txt" >&2; echo "the native build's bench does not print $nodes" >&2; exit 1; }
         echo "pass  native bench: $nodes nodes"
         exec bun "$here/tools/wasi-check.ts" "$work/out/$module" --bench "$nodes" --bench-args "$bench_args"

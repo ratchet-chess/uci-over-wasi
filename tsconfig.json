@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["host", "tools"]
+  "include": ["host", "tools", "test"]
 }

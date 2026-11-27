@@ -6,6 +6,7 @@
  */
 #include "uci_wasi.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,9 +34,11 @@ static void fail(const char *why)
 
 static void reserve(Bytes *b, size_t more)
 {
-    if (b->len + more <= b->cap) return;
+    if (more > SIZE_MAX - b->len) fail("uci_wasi: input buffer overflow");
+    size_t need = b->len + more;
+    if (need <= b->cap) return;
     size_t cap = b->cap ? b->cap : 4096;
-    while (cap < b->len + more) cap *= 2;
+    while (cap < need) cap = cap > SIZE_MAX / 2 ? need : cap * 2;
     b->at = realloc(b->at, cap);
     if (!b->at) fail("uci_wasi: out of memory for input");
     b->cap = cap;
@@ -154,10 +157,7 @@ int uci_wait(void)
 {
     int heard = uci_poll(1);
     if (heard || at_end) return heard;
-    if (input_ready(1)) {
-        fill();
-        end_last_line();
-    }
+    if (input_ready(1)) return uci_poll(1);
     return handle_lines(1);
 }
 

@@ -23,7 +23,11 @@ int main(void) {
     for (const char *l; (l = uci_getline());) {
 #ifdef _REENTRANT
         if (!strcmp(l, "uci")) puts("option name Threads type spin default 1 min 1 max 4");
-        if (!strncmp(l, "setoption name Threads value ", 29)) threads = atoi(l + 29);
+        if (!strncmp(l, "setoption name Threads value ", 29)) {
+            threads = atoi(l + 29);
+            if (threads < 1) threads = 1;
+            if (threads > 4) threads = 4;
+        }
 #endif
         if (!strcmp(l, "uci")) puts("option name Ponder type check default false\nuciok");
         else if (!strcmp(l, "isready")) puts("readyok");

@@ -58,7 +58,7 @@ type NestedStart = {
   arg?: number;
 };
 
-type NestedNote = CheckWorkerOut | { spawn: number; arg: number };
+type NestedNote = CheckWorkerOut | { spawn: number; arg: number } | { done: true };
 
 const scope = globalThis as unknown as {
   name: string;
@@ -70,15 +70,15 @@ const scope = globalThis as unknown as {
 };
 
 function makeWriter(post: (msg: CheckWorkerOut) => void): (fd: number, bytes: Uint8Array) => void {
-  const decoder = new TextDecoder();
+  const out = new TextDecoder();
+  const err = new TextDecoder();
   let partial = "";
   return (fd, bytes) => {
-    const text = decoder.decode(bytes, { stream: true });
     if (fd === 2) {
-      post({ stderr: text });
+      post({ stderr: err.decode(bytes, { stream: true }) });
       return;
     }
-    partial += text;
+    partial += out.decode(bytes, { stream: true });
     for (let nl = partial.indexOf("\n"); nl >= 0; nl = partial.indexOf("\n")) {
       post({ line: partial.slice(0, nl) });
       partial = partial.slice(nl + 1);
@@ -111,7 +111,10 @@ if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
       code = 1;
     }
     if (code !== undefined) post({ exit: code });
-    else scope.close();
+    else {
+      post({ done: true });
+      scope.close();
+    }
   };
 } else {
   const encoder = new TextEncoder();
@@ -147,9 +150,13 @@ if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
       const ring = new Ring();
       push = (b) => ring.push(b);
       closeInput = () => ring.close();
-      const workers: Worker[] = [];
+      const workers = new Set<Worker>();
+      let finished = false;
       const finish = (code: number) => {
+        if (finished) return;
+        finished = true;
         for (const w of workers) w.terminate();
+        workers.clear();
         post({ exit: code });
         scope.close();
       };
@@ -164,10 +171,11 @@ if (scope.name === ENGINE_THREAD || scope.name === SPAWNED_THREAD) {
       };
       const launch = (name: string, data: NestedStart) => {
         const w = new Worker(scope.location.href, { type: "module", name });
-        workers.push(w);
+        workers.add(w);
         w.onmessage = (ev: MessageEvent<NestedNote>) => {
           const n = ev.data;
           if ("spawn" in n) launch(SPAWNED_THREAD, { ...base, tid: n.spawn, arg: n.arg });
+          else if ("done" in n) workers.delete(w);
           else if ("exit" in n) finish(n.exit);
           else post(n);
         };
