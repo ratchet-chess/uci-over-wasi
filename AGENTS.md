@@ -25,7 +25,8 @@ where, ask the user.
 - `tools/wasi-check.ts`: the CLI driver for `host/wasi/check.ts`. `tools/wasm-features.ts` prints `host/wasi/features.ts`.
 - `tools/adapted.sh`: fetches, builds, compares and checks one adapted engine. Its header states the form of a folder of `adapted/`.
 - `tools/meta.ts`: combines an adapted folder's `pin` and `meta.json` into public `<id>.meta.json` provenance metadata for GUIs (`--check`, `--all`), and validates CPW keys and `#Section` anchors when `vendor/cpw/pages` is present.
-- `tools/package.ts`: packages a checked adapted module into `<out>/<id>/` with `<id>.wasm`, `<id>.meta.json`, and `SHA256SUMS`.
+- `tools/package.ts`: packages a checked adapted module into `<out>/<id>/` with `<id>.wasm`, `<id>.meta.json`, `<id>-LICENSE.txt`, `<id>-source.tar.gz` (for copyleft engines), and `SHA256SUMS`.
+- `.github/workflows/release.yml`: GitHub Actions release workflow on per-engine tags (`<id>`), guarded for GitHub alone, building, checking and publishing the packaged assets.
 - `tools/positions.ts`: a build's moves and node counts over a position file.
 - `tools/toolchains.sh` and `tools/toolchains.txt`: the pinned toolchains.
 - `tools/vendor.ts`: copies the host into another repo.

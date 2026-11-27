@@ -116,6 +116,7 @@ const SIDECAR_KEYS = new Set([
   "probe",
 ]);
 const LEAK_PATTERNS = [/<artifacts>/i, /\/mnt\//, /\/home\//, /\/work\//, /downloads\//];
+const REPO_URL = "https://github.com/ratchet-chess/uci-over-wasi";
 
 function parsePin(path: string): PinFields {
   const fields: Record<string, string> = {};
@@ -343,6 +344,12 @@ export function buildAdaptedMeta(folder: string, repoRoot?: string): { meta: Eng
         role: "upstream",
         commit: pin.commit,
         note: sidecar.originalLanguage ? `Upstream ${sidecar.originalLanguage} source` : "Upstream source",
+      },
+      {
+        label: `ratchet-chess/uci-over-wasi (adapted/${slug})`,
+        url: `${REPO_URL}/tree/main/adapted/${slug}`,
+        role: "source",
+        note: "UCI over WASI adaptation patches and build script",
       },
     ],
     ...(sidecar.cpwPage ? { cpwPage: sidecar.cpwPage } : {}),

@@ -1,0 +1,135 @@
+name: Release adapted engine
+
+# Publishes one adapted engine as a GitHub release (<id>.wasm, <id>.meta.json, <id>-LICENSE.txt,
+# optional <id>-source.tar.gz for GPL/LGPL/AGPL engines, and SHA256SUMS).
+# Guarded by github.server_url so Gitea ignores this job when mirroring.
+# Tag one adapted folder by its id (e.g. `stockfish-10`) to build, check and publish that engine.
+on:
+  push:
+    tags:
+      - "*"
+      - "!v*"
+  workflow_dispatch:
+    inputs:
+      engine:
+        description: Adapted folder name under adapted/ (e.g. stockfish-10)
+        required: true
+        type: string
+      publish:
+        description: Publish or update a GitHub release for this tag (false = dry-run artifact only)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    env:
+      ENGINE: ${{ github.event_name == 'workflow_dispatch' && inputs.engine || github.ref_name }}
+      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate adapted engine folder
+        id: meta
+        run: |
+          if [ ! -f "adapted/$ENGINE/pin" ] || [ ! -f "adapted/$ENGINE/meta.json" ]; then
+            echo "adapted/$ENGINE is missing pin or meta.json" >&2
+            exit 1
+          fi
+          need="wasi-sdk"
+          if grep -qE '(^|[[:space:]])cargo[[:space:]]' "adapted/$ENGINE/build.sh" || { [ -f "adapted/$ENGINE/fetch.sh" ] && grep -qE '(^|[[:space:]])cargo[[:space:]]' "adapted/$ENGINE/fetch.sh"; }; then
+            need="$need rust"
+          fi
+          if grep -qE '(^|[[:space:]])go[[:space:]]+build' "adapted/$ENGINE/build.sh"; then
+            need="$need go"
+          fi
+          echo "toolchains=$need" >> "$GITHUB_OUTPUT"
+          echo "engine: $ENGINE (toolchains: $need)"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check and metadata check
+        run: |
+          bun run typecheck
+          bun tools/meta.ts "adapted/$ENGINE" --check
+
+      - name: Toolchains
+        env:
+          TOOLCHAINS_NEED: ${{ steps.meta.outputs.toolchains }}
+        run: |
+          # $TOOLCHAINS_NEED is split into words on purpose
+          tools/toolchains.sh fetch $TOOLCHAINS_NEED
+          tools/toolchains.sh unpack $TOOLCHAINS_NEED
+
+      - name: Fetch, build, compare and check
+        run: |
+          tools/adapted.sh fetch "adapted/$ENGINE"
+          JOBS=$(nproc) tools/adapted.sh check "adapted/$ENGINE"
+
+      - name: Package release assets
+        run: |
+          bun tools/package.ts "adapted/$ENGINE" --out dist
+          (cd "dist/$ENGINE" && sha256sum -c SHA256SUMS)
+
+      - name: Prepare release notes
+        run: |
+          . "adapted/$ENGINE/pin"
+          {
+            echo "Adapted WASI preview-1 build of \`$ENGINE\`."
+            echo ""
+            echo "- **Upstream:** $url (commit \`$commit\`)"
+            echo "- **License:** $license (see \`$ENGINE-LICENSE.txt\`)"
+            echo "- **Adaptation:** https://github.com/ratchet-chess/uci-over-wasi/tree/main/adapted/$ENGINE"
+            if [ -f "dist/$ENGINE/$ENGINE-source.tar.gz" ]; then
+              echo "- **Corresponding source:** \`$ENGINE-source.tar.gz\`"
+            fi
+            echo ""
+            echo "## SHA256SUMS"
+            echo '```'
+            cat "dist/$ENGINE/SHA256SUMS"
+            echo '```'
+          } > "dist/$ENGINE/RELEASE_NOTES.md"
+
+      - name: Upload dry-run artifact
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapted-${{ env.ENGINE }}
+          path: |
+            dist/${{ env.ENGINE }}/${{ env.ENGINE }}.wasm
+            dist/${{ env.ENGINE }}/${{ env.ENGINE }}.meta.json
+            dist/${{ env.ENGINE }}/${{ env.ENGINE }}-LICENSE.txt
+            dist/${{ env.ENGINE }}/${{ env.ENGINE }}-source.tar.gz
+            dist/${{ env.ENGINE }}/SHA256SUMS
+
+      - name: Publish GitHub release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=(
+            "dist/$ENGINE/$ENGINE.wasm"
+            "dist/$ENGINE/$ENGINE.meta.json"
+            "dist/$ENGINE/$ENGINE-LICENSE.txt"
+            "dist/$ENGINE/SHA256SUMS"
+          )
+          if [ -f "dist/$ENGINE/$ENGINE-source.tar.gz" ]; then
+            assets+=("dist/$ENGINE/$ENGINE-source.tar.gz")
+          fi
+          if gh release view "$ENGINE" >/dev/null 2>&1; then
+            gh release upload "$ENGINE" --clobber "${assets[@]}"
+            gh release edit "$ENGINE" --title "$ENGINE" --notes-file "dist/$ENGINE/RELEASE_NOTES.md"
+          else
+            gh release create "$ENGINE" --verify-tag --title "$ENGINE" --notes-file "dist/$ENGINE/RELEASE_NOTES.md" "${assets[@]}"
+          fi
