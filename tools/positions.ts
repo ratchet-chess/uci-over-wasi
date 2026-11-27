@@ -50,11 +50,11 @@ function search(position: string): Promise<{ nodes: number; move: string }> {
       clearTimeout(timer);
       reject(err);
     });
-    engine.on("close", (code) => {
+    engine.on("close", (code, signal) => {
       clearTimeout(timer);
       text += decoder.decode();
       if (text !== "") handleLine(text);
-      if (code !== 0) reject(new Error(`the engine exited with ${code}: ${position}`));
+      if (code !== 0) reject(new Error(`the engine ${signal ? `died of ${signal}` : `exited with ${code}`}: ${position}`));
       else if (!move) reject(new Error(`the engine ended with no bestmove: ${position}`));
       else if (!nodes) reject(new Error(`the engine printed no node count: ${position}`));
       else resolve({ nodes, move });

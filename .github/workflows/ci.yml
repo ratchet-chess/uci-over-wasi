@@ -54,7 +54,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           git cat-file -e "$BASE^{commit}" 2>/dev/null || BASE=$(git rev-parse HEAD~1)
-          folders=$(git diff --name-only "$BASE"...HEAD -- adapted/ | cut -d/ -f1-2 | sort -u | while read -r f; do [ -f "$f/pin" ] && printf '%s\n' "$f"; done)
+          folders=$(git diff --name-only "$BASE"...HEAD -- adapted/ | cut -d/ -f1-2 | sort -u | while read -r f; do if [ -f "$f/pin" ]; then printf '%s\n' "$f"; fi; done)
           {
             echo "folders<<EOF"
             printf '%s\n' "$folders"

@@ -1,0 +1,3 @@
+[test]
+# fetched engine trees under tmp/ may hold test files; only this repo's run
+root = "test"

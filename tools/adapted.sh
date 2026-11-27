@@ -39,8 +39,10 @@ export CXX_WASI_THREADS="$WASI_SDK/bin/clang++ --target=wasm32-wasip1-threads -p
 export THREADS_LINK="-Wl,--import-memory,--export-memory,--shared-memory"
 export HELPER=$here/helper WRAP=-Wl,--wrap=pthread_create JOBS=${JOBS:-1}
 helper_o() {
-  mkdir -p "$1" && $CC_WASI -O2 -Wall -Wextra -c "$HELPER/uci_wasi.c" -o "$1/uci_wasi.o" && export HELPER_O=$1/uci_wasi.o
-  $CC_WASI_THREADS -O2 -Wall -Wextra -c "$HELPER/uci_wasi.c" -o "$1/uci_wasi-threads.o" && export HELPER_O_THREADS=$1/uci_wasi-threads.o
+  mkdir -p "$1"
+  $CC_WASI -O2 -Wall -Wextra -c "$HELPER/uci_wasi.c" -o "$1/uci_wasi.o"
+  $CC_WASI_THREADS -O2 -Wall -Wextra -c "$HELPER/uci_wasi.c" -o "$1/uci_wasi-threads.o"
+  export HELPER_O=$1/uci_wasi.o HELPER_O_THREADS=$1/uci_wasi-threads.o
 }
 
 if [ "$cmd" = echo ]; then

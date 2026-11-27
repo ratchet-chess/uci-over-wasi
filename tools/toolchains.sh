@@ -22,8 +22,11 @@ case "$cmd" in
     grep -v '^#' "$pins" | while read -r name sha url; do
       wanted "$name" || continue
       file=$T/archives/${url##*/}
-      [ -f "$file" ] || curl -sSLf -o "$file.part" "$url"
-      [ -f "$file" ] || mv "$file.part" "$file"
+      if [ ! -f "$file" ]; then
+        curl -sSLf -o "$file.part" "$url"
+        echo "$sha  $file.part" | sha256sum -c --quiet -
+        mv "$file.part" "$file"
+      fi
       echo "$sha  $file" | sha256sum -c --quiet -
     done
     ;;
