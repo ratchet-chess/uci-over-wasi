@@ -89,7 +89,7 @@ class Reader {
   }
 
   skip(n: number): void {
-    if (n < 0 || this.at + n > this.b.length) throw new Error("the module ends inside an instruction");
+    if (this.at + n > this.b.length) throw new Error("truncated WebAssembly module");
     this.at += n;
   }
 

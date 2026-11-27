@@ -7,7 +7,8 @@
  *   bun tools/vendor.ts <folder> [file...]
  *
  * <folder> is the copy's place in the other repo, such as vendor/uci-over-wasi. The files are names in host/wasi/,
- * default all four; a page needs only browser.ts and wasi.ts. The copy also gets LICENSE and a README.md that
+ * by default the host under Bun, Node and a page; a page needs only browser.ts and wasi.ts. A named file's
+ * imports are not followed, so name them too. The copy also gets LICENSE and a README.md that
  * names the commit. It refuses when a file to copy has changes not committed, because the recorded commit would
  * then not describe the copy.
  */

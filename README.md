@@ -66,7 +66,7 @@ engine at one version:
 * **`pin`:** the engine's public repo, the commit, its license, and how the two builds are compared.
 * **`edits.patch`:** the edits. Each one is under the target's guard, with a comment that opens `UCI over WASI:`.
 * **`build.sh`:** builds the native engine and the module from the same tree.
-* **`meta.json`:** curated provenance, blurb, and 8-15 Chess Programming Wiki features; `bun tools/meta.ts` combines it with `pin` into `<id>.meta.json`, and `bun tools/package.ts` bundles `<id>.wasm`, `<id>.meta.json`, and `SHA256SUMS`.
+* **`meta.json`:** curated provenance, blurb, and 8-15 Chess Programming Wiki features; `bun tools/meta.ts` combines it with `pin` into `<id>.meta.json`, and `bun tools/package.ts` bundles `<id>.wasm`, `<id>.meta.json`, the license, the source for a copyleft engine, and `SHA256SUMS`.
 
 The module must play the native build's search. Where the native build has a node count that repeats, the two
 counts are compared. Where it has none, their moves and node counts are compared over a position file.

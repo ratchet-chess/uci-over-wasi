@@ -145,7 +145,7 @@ function feed(push: (bytes: Uint8Array) => void): (profile: Profile) => void {
 /**
  * The build on this thread, suspended whenever it waits for input, for a page
  * without shared memory whose browser has JavaScript Promise Integration. The
- * page gets what it gets through the ring: the instance lives for the whole
+ * page gets what the shared-memory mode gives: the instance lives for the whole
  * session, and a `stop`, an `isready` or a `ponderhit` reaches a running search.
  */
 async function suspended(): Promise<void> {

@@ -116,8 +116,10 @@ const SIDECAR_KEYS = new Set([
   "probe",
 ]);
 const LEAK_PATTERNS = [/<artifacts>/i, /\/mnt\//, /\/home\//, /\/work\//, /downloads\//];
+/** this repo's public home, which a package's sources link to */
 export const REPO_URL = "https://github.com/ratchet-chess/uci-over-wasi";
 
+/** reads an adapted folder's `pin` file (shell assignments) and throws for a missing or malformed field */
 export function parsePin(path: string): PinFields {
   const fields: Record<string, string> = {};
   for (const raw of readFileSync(path, "utf8").split(/\r?\n/)) {
@@ -301,6 +303,13 @@ function checkCpwKeys(root: string, meta: EngineMeta, slug: string): boolean {
   return true;
 }
 
+/**
+ * The public metadata of the adapted engine in `folder`, from its pin and its meta.json. Throws for an invalid
+ * sidecar, an unknown CPW key, or a private path in the result. `cpwChecked` is whether the CPW keys were
+ * checked against `vendor/cpw/pages` under `repoRoot`, which is this repo by default.
+ *
+ *   const { meta } = buildAdaptedMeta("adapted/stockfish-10");
+ */
 export function buildAdaptedMeta(folder: string, repoRoot?: string): { meta: EngineMeta; cpwChecked: boolean } {
   const abs = resolve(folder);
   const root = repoRoot ? resolve(repoRoot) : resolve(dirname(fileURLToPath(import.meta.url)), "..");

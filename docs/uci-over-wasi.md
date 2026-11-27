@@ -439,11 +439,13 @@ that meets this document.
 
 ### Checking a module
 
-`tools/wasi-check.ts` runs a module under `host/wasi/` and checks the rules of Part 1.
+`host/wasi/check.ts` checks the rules of Part 1. `tools/wasi-check.ts` runs it on a module under Bun or Node,
+and `host/wasi/check-browser.ts` runs it in a page, each session in a `host/wasi/check-worker.ts` Worker.
 
 - **For every module:** its `requires` line names each feature it uses and no other, with § The
   declaration's exception for threads.
-  `tools/wasm-features.ts` reads the features from the module's code, and lists each relaxed operation. That
+  `host/wasi/features.ts` reads the features from the module's code, and lists each relaxed operation;
+  `tools/wasm-features.ts` prints them. That
   the operations are exact is not checked; § Form's proof is a node signature on two CPUs.
 - **For a polls module:** `stop`, `isready` and line order during a search; the end of input in each of
   its cases; `quit`; and ponder.
