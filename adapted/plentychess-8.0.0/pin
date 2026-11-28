@@ -1,0 +1,7 @@
+# PlentyChess 8.0.0, by Yoshie2000. Its README states the code is under the GPLv3, and no file names a later version.
+url=https://github.com/Yoshie2000/PlentyChess
+commit=50ad9f1b523063cbbbf599fe0547f42870fe2906
+license=GPL-3.0-only
+module=plentychess.wasm
+compare=bench
+nodes=3939470

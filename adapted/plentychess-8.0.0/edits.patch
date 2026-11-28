@@ -1,0 +1,208 @@
+diff --git a/src/fathom/src/stdendian.h b/src/fathom/src/stdendian.h
+index 847db07..fefba44 100644
+--- a/src/fathom/src/stdendian.h
++++ b/src/fathom/src/stdendian.h
+@@ -69,7 +69,8 @@
+ #endif
+ 
+ /* Linux / GLIBC */
+-#if defined(__linux__) || defined(__GLIBC__) || defined(__CYGWIN__)
++/* UCI over WASI: wasi-libc has the same endian.h and byteswap.h. */
++#if defined(__linux__) || defined(__GLIBC__) || defined(__CYGWIN__) || defined(__wasi__)
+ #include <endian.h>
+ #include <byteswap.h>
+ #define __ENDIAN_DEFINED        1
+diff --git a/src/fathom/src/tbprobe.c b/src/fathom/src/tbprobe.c
+index d08e3d0..44ee908 100644
+--- a/src/fathom/src/tbprobe.c
++++ b/src/fathom/src/tbprobe.c
+@@ -361,7 +361,8 @@ static void *map_file(FD fd, map_t *mapping)
+     perror("mmap");
+     return NULL;
+   }
+-#ifdef POSIX_MADV_RANDOM
++/* UCI over WASI: wasi-libc declares posix_madvise but has none. */
++#if defined(POSIX_MADV_RANDOM) && !defined(__wasi__)
+   /* Advise the kernel that we are likely to access this data
+      region randomly, so prefetch is not helpful. See
+      https://github.com/official-stockfish/Stockfish/pull/1829 */
+diff --git a/src/nnue.cpp b/src/nnue.cpp
+index ecf36ce..0a24029 100644
+--- a/src/nnue.cpp
++++ b/src/nnue.cpp
+@@ -18,12 +18,20 @@
+ #undef _MSC_VER
+ #endif
+ 
++#ifdef __wasi__
++// UCI over WASI: incbin's assembler block has no WebAssembly form. The net is used in place, so it keeps incbin's
++// alignment.
++alignas(64) static const unsigned char gNETWORKData[] = {
++#embed EVALFILE
++};
++#else
+ #include "incbin/incbin.h"
+ // This will define the following variables:
+ // const unsigned char        gNETWORKData[];
+ // const unsigned char *const gNETWORKEnd;
+ // const unsigned int         gNETWORKSize;
+ INCBIN(NETWORK, EVALFILE);
++#endif
+ 
+ #ifdef SP_MSVC
+ #pragma pop_macro("_MSC_VER")
+diff --git a/src/thread.cpp b/src/thread.cpp
+index 23dd6e8..ed986da 100644
+--- a/src/thread.cpp
++++ b/src/thread.cpp
+@@ -57,6 +57,11 @@ void Worker::idle() {
+ }
+ 
+ void Worker::exit() {
++#ifdef __wasi__
++    // UCI over WASI: no thread to end
++    exiting = true;
++    return;
++#endif
+     {
+         std::lock_guard<std::mutex> lock(mutex);
+         searching = true;
+diff --git a/src/thread.h b/src/thread.h
+index 677de08..2129400 100644
+--- a/src/thread.h
++++ b/src/thread.h
+@@ -366,6 +366,14 @@ public:
+ 
+         startedThreads = 0;
+ 
++#ifdef __wasi__
++        // UCI over WASI: a module starts no thread, so the worker is made here, and searches on the UCI thread
++        for (int i = 0; i < numThreads; i++) {
++            workers[i] = std::make_unique<Worker>(this, networkWeights[0], sharedHistories[0], i, i);
++        }
++        return;
++#endif
++
+         for (int i = 0; i < numThreads; i++) {
+             threads.push_back(std::make_unique<std::thread>([this, numThreads, i]() {
+                 configureThreadBinding(i, numThreads);
+@@ -394,6 +402,15 @@ public:
+             worker.get()->searching = true;
+         }
+ 
++#ifdef __wasi__
++        // UCI over WASI: the search runs here, as Worker::idle runs it on the native thread
++        for (auto& worker : workers) {
++            worker.get()->startSearching();
++            worker.get()->searching = false;
++        }
++        return;
++#endif
++
+         for (auto& worker : workers) {
+             worker.get()->cv.notify_all();
+         }
+diff --git a/src/time.cpp b/src/time.cpp
+index 49469f7..96655b9 100644
+--- a/src/time.cpp
++++ b/src/time.cpp
+@@ -4,6 +4,9 @@
+ #include "time.h"
+ #include "uci.h"
+ #include "spsa.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ TUNE_INT_DISABLED(maxTimeFactor, 729, 500, 1000);
+ TUNE_INT_DISABLED(totalTimeDivisor, 134, 50, 500);
+@@ -16,6 +19,17 @@ int64_t getTime() {
+ }
+ 
+ bool timeOver(SearchParameters& parameters, SearchData& data) {
++#ifdef __wasi__
++    // UCI over WASI: the search runs on the UCI thread, so the main thread hears its input here, at its time check.
++    // A stop or a ponderhit stops the search, as the native UCI loop's do. A ponder search, or one with no limit the
++    // search acts on, is unbounded; the search never reads `infinite`, which a bench's depth search has set too.
++    if ((data.nodesSearched.load(std::memory_order_relaxed) % 1024) == 0
++        && (uci_poll(parameters.ponder
++                     || (!parameters.depth && !parameters.nodes && !parameters.movetime && !parameters.wtime
++                         && !parameters.btime))
++            & (UCI_STOP | UCI_PONDERHIT)))
++        return true;
++#endif
+     if (parameters.ponder)
+         return false;
+     return (data.maxTime && (data.nodesSearched.load(std::memory_order_relaxed) % 1024) == 0 && getTime() >= data.maxTime) || (parameters.nodes && data.nodesSearched.load(std::memory_order_relaxed) >= parameters.nodes * (1 + 9 * UCI::Options.datagen.value));
+diff --git a/src/tt.h b/src/tt.h
+index e9d9fe9..6c29265 100644
+--- a/src/tt.h
++++ b/src/tt.h
+@@ -118,6 +118,11 @@ public:
+     }
+ 
+     void clear() {
++#ifdef __wasi__
++        // UCI over WASI: a module starts no thread, so the table is cleared here
++        std::memset(static_cast<void*>(&table[0]), 0, sizeof(TTCluster) * clusterCount);
++        return;
++#endif
+         size_t threadCount = UCI::Options.threads.value;
+         std::vector<std::thread> ts;
+ 
+diff --git a/src/uci.cpp b/src/uci.cpp
+index ee335cd..b68c1c2 100644
+--- a/src/uci.cpp
++++ b/src/uci.cpp
+@@ -21,6 +21,9 @@
+ #include "fathom/src/tbprobe.h"
+ #include "debug.h"
+ #include "bench.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ namespace UCI {
+     UCIOptions Options;
+@@ -483,7 +486,13 @@ void uciLoop(int argc, char* argv[]) {
+         speedtest(board, boardHistory);
+         return;
+     }
++#ifdef __wasi__
++    // UCI over WASI: the helper owns standard input, so the poll in the search sees a waiting line
++    for (const char* next; (next = uci_getline()) != nullptr;) {
++        std::string line = next;
++#else
+     for (std::string line = {};std::getline(std::cin, line);) {
++#endif
+ 
+         if (matchesToken(line, "quit")) {
+             threads.stopSearching();
+diff --git a/src/uci.h b/src/uci.h
+index 83bea61..6cb76fe 100644
+--- a/src/uci.h
++++ b/src/uci.h
+@@ -72,7 +72,11 @@ namespace UCI {
+             16,
+ #endif
+             1,
++#ifdef __wasi__
++            1024  // UCI over WASI: the hash table a module can allocate
++#else
+             1048576
++#endif
+         };
+ 
+         UCIOption<UCI_SPIN> threads = {
+@@ -80,7 +84,11 @@ namespace UCI {
+             1,
+             1,
+             1,
++#ifdef __wasi__
++            1  // UCI over WASI: a module starts no thread
++#else
+             4096
++#endif
+         };
+ 
+         UCIOption<UCI_SPIN> multiPV = {

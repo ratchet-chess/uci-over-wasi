@@ -1,0 +1,92 @@
+{
+  "date": "2026-06-27",
+  "year": 2026,
+  "originalAuthors": [
+    "Yoshie2000"
+  ],
+  "originalLanguage": "C++",
+  "originalLicenseNote": "Engine source under GPL-3.0; embeds the network 0178r.bin from https://github.com/Yoshie2000/PlentyNetworks (GPL-3.0).",
+  "upstreamTag": "b-v8.0.0",
+  "blurb": "PlentyChess 8.0.0 is the June 2026 release of Yoshie2000's GPL C++ UCI chess engine, developed with OpenBench testing on furybench and trained with bullet. It pairs singular, double and triple extensions with multi-cut, ProbCut, razoring, reverse futility, null-move, late-move, futility and SEE pruning, upcoming-repetition detection, and continuation histories with pawn, non-pawn and continuation correction histories with an embedded NNUE of threat, pawn-pair and 12 king-bucketed piece-square inputs, a 640-wide accumulator, then 16, 32 and 1 in 8 output buckets. Adapted to UCI over WASI on the poll helper, its SSSE3 net code compiled to WebAssembly SIMD through SIMDe.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build on the C poll helper, with the worker's search run on the UCI thread and Threads fixed to 1; built by hand with the flags of the Makefile's ssse3 architecture, with the net laid out by the engine's own tool for that path; the SSSE3 path compiled through SIMDe to 128-bit WebAssembly SIMD, with node counts equal to the native AVX2 build's and to the release's bench; no Syzygy tablebases; Hash capped at 1024 MB.",
+  "features": [
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Principal variation search with iterative deepening, MultiPV and aspiration windows."
+    },
+    {
+      "key": "Mate_Distance_Pruning",
+      "label": "Mate Distance Pruning",
+      "group": "Search",
+      "implementation": "Alpha and beta bounded by the mate distance from the root."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility Pruning",
+      "group": "Search",
+      "implementation": "Static-eval margin pruning by depth."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Quiescence verification when the eval is far below alpha."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Depth- and eval-scaled null-move pruning."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Capture search against a raised beta, guided by the hash entry."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "One ply less without a hash move."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Singular, double and triple extensions, with multi-cut and negative extensions."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Reductions adjusted by history, node type and correction."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Late-Move, Futility & SEE Pruning",
+      "group": "Search",
+      "implementation": "Late-move, history, futility and SEE pruning in the moves loop."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Histories & Correction",
+      "group": "Ordering",
+      "implementation": "Quiet, capture and continuation histories with killer and counter moves, plus pawn, non-pawn and continuation correction histories."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Clustered hash table, cleared at a new game."
+    },
+    {
+      "key": "NNUE",
+      "label": "NNUE",
+      "group": "Evaluation",
+      "implementation": "Embedded integer net: threat, pawn-pair and 12 king-bucketed piece-square inputs, a 640-wide accumulator, then 16, 32 and 1 in 8 output buckets."
+    }
+  ]
+}
