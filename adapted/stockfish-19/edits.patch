@@ -1,0 +1,206 @@
+diff --git a/engine.cpp b/engine.cpp
+index 3179efa..efee3bf 100644
+--- a/engine.cpp
++++ b/engine.cpp
+@@ -81,13 +81,23 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
+       }));
+ 
+     options.add(  //
++#ifdef __wasi__
++      // UCI over WASI: a module starts no thread
++      "Threads", Option(1, 1, 1, [this](const Option&) {
++#else
+       "Threads", Option(1, 1, MaxThreads, [this](const Option&) {
++#endif
+           resize_threads();
+           return thread_allocation_information_as_string();
+       }));
+ 
+     options.add(  //
++#ifdef __wasi__
++      // UCI over WASI: the hash table a module can allocate
++      "Hash", Option(16, 1, 1024, [this](const Option& o) {
++#else
+       "Hash", Option(16, 1, MaxHashMB, [this](const Option& o) {
++#endif
+           set_tt_size(o);
+           return std::nullopt;
+       }));
+diff --git a/nnue/network.cpp b/nnue/network.cpp
+index e6f166d..7943b46 100644
+--- a/nnue/network.cpp
++++ b/nnue/network.cpp
+@@ -27,8 +27,10 @@
+ #include <vector>
+ #include <filesystem>
+ 
++#ifndef __wasi__  // UCI over WASI: the net is compiled in by #embed, below
+ #define INCBIN_SILENCE_BITCODE_WARNING
+ #include "../incbin/incbin.h"
++#endif
+ 
+ #include "../evaluate.h"
+ #include "../misc.h"
+@@ -46,7 +48,13 @@
+ //     const unsigned char *const gEmbeddedNNUEEnd;     // a marker to the end
+ //     const unsigned int         gEmbeddedNNUESize;    // the size of the embedded file
+ // Note that this does not work in Microsoft Visual Studio.
+-#if !defined(UNIVERSAL_BINARY) && !defined(_MSC_VER) && !defined(NNUE_EMBEDDING_OFF)
++#if defined(__wasi__)
++// UCI over WASI: incbin's assembler block has no WebAssembly form. The net is aligned as incbin aligns it.
++alignas(64) const unsigned char gEmbeddedNNUEData[] = {
++    #embed EvalFileDefaultName
++};
++const unsigned int gEmbeddedNNUESize = sizeof(gEmbeddedNNUEData);
++#elif !defined(UNIVERSAL_BINARY) && !defined(_MSC_VER) && !defined(NNUE_EMBEDDING_OFF)
+ INCBIN(EmbeddedNNUE, EvalFileDefaultName);
+ #elif defined(UNIVERSAL_BINARY_MACOS_X86_SLICE)
+ // Determined at runtime, see universal/nnue_embed.cpp
+diff --git a/search.cpp b/search.cpp
+index b7e6329..784f597 100644
+--- a/search.cpp
++++ b/search.cpp
+@@ -49,6 +49,9 @@
+ #include "types.h"
+ #include "uci.h"
+ #include "ucioption.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ namespace Stockfish {
+ 
+@@ -222,7 +225,19 @@ void Search::Worker::start_searching() {
+     // GUI sends a "stop" or "ponderhit" command. We therefore simply wait here
+     // until the GUI sends one of those commands.
+     while (!threads.stop && (main_manager()->ponder || limits.infinite))
++#ifdef __wasi__
++    // UCI over WASI: no other thread can raise the stop, so the search waits for its input here, and maps it as
++    // UCIEngine::loop does
++    {
++        const int heard = uci_wait();
++        if (heard & UCI_STOP)
++            threads.stop = true;
++        if (heard & UCI_PONDERHIT)
++            main_manager()->ponder = false;
++    }
++#else
+     {}
++#endif
+ 
+     // Stop the threads if not already stopped (also raise the stop if "ponderhit"
+     // just reset threads.ponder).
+@@ -2108,6 +2123,22 @@ void SearchManager::check_time(Search::Worker& worker) {
+     // When using nodes, ensure checking rate is not lower than 0.1% of nodes
+     callsCnt = worker.limits.nodes ? std::min(512, int(worker.limits.nodes / 1024)) : 512;
+ 
++#ifdef __wasi__
++    // UCI over WASI: the search runs on the UCI thread, so it reads its input here, and maps stop and ponderhit as
++    // UCIEngine::loop does. An infinite or ponder search, or one with no limit, is unbounded.
++    {
++        const auto& l = worker.limits;
++        const bool unbounded = l.infinite || ponder
++                            || (!l.use_time_management() && !l.movetime && !l.nodes && !l.depth && !l.mate
++                                && !l.perft);
++        const int heard = uci_poll(unbounded);
++        if (heard & UCI_STOP)
++            worker.threads.stop = true;
++        if (heard & UCI_PONDERHIT)
++            ponder = false;
++    }
++#endif
++
+     static TimePoint lastInfoTime = now();
+ 
+     TimePoint elapsed = tm.elapsed([&worker]() { return worker.threads.nodes_searched(); });
+diff --git a/thread.cpp b/thread.cpp
+index d767268..4187b65 100644
+--- a/thread.cpp
++++ b/thread.cpp
+@@ -55,10 +55,16 @@ Thread::Thread(Search::SharedState&                    sharedState,
+     idx(n),
+     idxInNuma(numaN),
+     totalNuma(totalNumaCount),
+-    nthreads(sharedState.options["Threads"]),
++    nthreads(sharedState.options["Threads"])
++#ifndef __wasi__  // UCI over WASI: a module starts no thread; the thread's jobs run where they are queued
++    ,
+     stdThread(
+-      create_native_thread(NativeThreadOptions{}.setLargeStack(true), &Thread::idle_loop, this)) {
+-
++      create_native_thread(NativeThreadOptions{}.setLargeStack(true), &Thread::idle_loop, this))
++#endif
++{
++#ifdef __wasi__
++    searching = false;
++#else
+     if (!stdThread.joinable())
+     {
+         std::cerr << "Failed to create search thread\n";
+@@ -66,6 +72,7 @@ Thread::Thread(Search::SharedState&                    sharedState,
+     }
+ 
+     wait_for_search_finished();
++#endif
+ 
+     run_custom_job([this, &binder, &sharedState, &sm, n]() {
+         // Use the binder to [maybe] bind the threads to a NUMA node before doing
+@@ -86,9 +93,11 @@ Thread::~Thread() {
+ 
+     assert(!searching);
+ 
++#ifndef __wasi__  // UCI over WASI: no thread to end
+     exit = true;
+     start_searching();
+     stdThread.join();
++#endif
+ }
+ 
+ // Wakes up the thread that will start the search
+@@ -112,6 +121,13 @@ void Thread::wait_for_search_finished() {
+ 
+ // Launching a function in the thread
+ void Thread::run_custom_job(std::function<void()> f) {
++#ifdef __wasi__
++    // UCI over WASI: the job runs here, on the UCI thread, as idle_loop runs it on the native thread
++    searching = true;
++    f();
++    searching = false;
++    return;
++#endif
+     {
+         std::unique_lock<std::mutex> lk(mutex);
+         cv.wait(lk, [&] { return !searching; });
+diff --git a/uci.cpp b/uci.cpp
+index 5dd2d03..0f77591 100644
+--- a/uci.cpp
++++ b/uci.cpp
+@@ -41,6 +41,9 @@
+ #include "search.h"
+ #include "types.h"
+ #include "ucioption.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ namespace Stockfish {
+ 
+@@ -100,9 +103,18 @@ void UCIEngine::loop() {
+ 
+     do
+     {
++#ifdef __wasi__
++        // UCI over WASI: the helper owns standard input, so the poll in the search sees a waiting line
++        if (cli.argc == 1)
++        {
++            const char* line = uci_getline();
++            cmd              = line ? line : "quit";
++        }
++#else
+         if (cli.argc == 1
+             && !getline(std::cin, cmd))  // Wait for an input or an end-of-file (EOF) indication
+             cmd = "quit";
++#endif
+ 
+         currentCmd = cmd;
+         std::istringstream is(cmd);

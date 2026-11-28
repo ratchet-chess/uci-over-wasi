@@ -1,0 +1,8 @@
+# Stockfish 19, by the Stockfish developers (see AUTHORS)
+url=https://github.com/official-stockfish/Stockfish
+commit=edb0d9db6731067ec50ce619ff372b463bc4dd5d
+dir=src
+license=GPL-3.0-or-later
+module=stockfish.wasm
+compare=bench
+nodes=2497913

@@ -1,0 +1,97 @@
+{
+  "date": "2026-09-05",
+  "year": 2026,
+  "originalAuthors": [
+    "Tord Romstad",
+    "Marco Costalba",
+    "Joona Kiiski",
+    "Gary Linscott",
+    "Stockfish contributors"
+  ],
+  "originalLanguage": "C++",
+  "originalLicenseNote": "Engine source under GPL-3.0-or-later; embeds the default network nn-1a298aa575a0.nnue from https://github.com/official-stockfish/networks, whose networks were uploaded under CC0.",
+  "upstreamTag": "sf_19",
+  "cpwPage": "Stockfish",
+  "blurb": "Stockfish 19 is the September 2026 release of Stockfish, developed through Fishtest distributed SPRT testing. It pairs magic bitboards, singular extensions scaled by their margin, multi-cut and negative extensions, ProbCut, razoring, futility, null-move and SEE pruning, upcoming-repetition detection, and continuation, capture, pawn and low-ply histories with correction histories, all evaluated by a single embedded NNUE with threat, king-relative and pawn-pair inputs. Adapted to UCI over WASI from the pinned sf_19 commit, following its own Emscripten WebAssembly architecture with SIMDe in place of Emscripten's x86 headers.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build on the C poll helper, with the thread pool's jobs run on the UCI thread and Threads fixed to 1; the Makefile's wasm32 architecture (the SSE4.1 path with its WebAssembly intrinsics, sloppy atomics), compiled with SIMDe to 128-bit WebAssembly SIMD, with node counts equal to the native AVX2 build's and to the release's bench; a finished infinite or ponder search waits in the helper for its stop; no Syzygy tablebases; Hash capped at 1024 MB.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "Magic bitboards for slider attacks, with a BMI2 PEXT path natively."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Principal variation search with iterative deepening, MultiPV and aspiration windows."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Depth- and eval-scaled null-move pruning with a verification search at high depth."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Reduced capture search against a raised beta, from depth 3."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Quiescence verification when the eval is far below alpha."
+    },
+    {
+      "key": "Futility_Pruning",
+      "label": "Futility Pruning",
+      "group": "Search",
+      "implementation": "Child-node (reverse) futility pruning and futility pruning of quiet moves."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "One ply less on PV and cut nodes without a hash move."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Singular extensions scaled by how far the hash move stands out, with multi-cut and negative extensions."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Reductions adjusted by history, node type, correction and TT state."
+    },
+    {
+      "key": "Static_Exchange_Evaluation",
+      "label": "SEE Pruning",
+      "group": "Search",
+      "implementation": "SEE thresholds prune captures and quiet moves, also in quiescence."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Histories & Correction",
+      "group": "Ordering",
+      "implementation": "Butterfly, continuation, capture, pawn and low-ply histories, plus pawn, minor-piece, non-pawn and continuation correction histories."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Clusters of three entries with generations, bounds and static evals."
+    },
+    {
+      "key": "NNUE",
+      "label": "NNUE",
+      "group": "Evaluation",
+      "implementation": "Single embedded net: threat, HalfKAv2_hm and pawn-pair inputs, a 1024-wide accumulator, then 32 and 32 in 8 layer stacks with 8 PSQT buckets."
+    }
+  ]
+}
