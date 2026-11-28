@@ -1,0 +1,320 @@
+diff --git a/src/chessboard/board_state.cpp b/src/chessboard/board_state.cpp
+index 2c3f322..c5c7e40 100644
+--- a/src/chessboard/board_state.cpp
++++ b/src/chessboard/board_state.cpp
+@@ -110,15 +110,27 @@ bool BoardState::init_from_fen(const std::array<std::string_view, 6>& fen)
+         en_passant = static_cast<Square>((fen[3][0] - 'a') + (fen[3][1] - '1') * 8);
+     };
+ 
++#ifdef __wasi__
++    // UCI over WASI: from_chars takes pointers, which libc++'s ABI 2 string_view iterators are not
++    auto [ptr1, ec1] = std::from_chars(fen[4].data(), fen[4].data() + fen[4].size(), fifty_move_count);
++    if (ptr1 != fen[4].data() + fen[4].size())
++#else
+     auto [ptr1, ec1] = std::from_chars(fen[4].begin(), fen[4].end(), fifty_move_count);
+     if (ptr1 != fen[4].end())
++#endif
+     {
+         return false;
+     }
+ 
+     int full_move_count = 0;
++#ifdef __wasi__
++    // UCI over WASI: as above
++    auto [ptr2, ec2] = std::from_chars(fen[5].data(), fen[5].data() + fen[5].size(), full_move_count);
++    if (ptr2 != fen[5].data() + fen[5].size())
++#else
+     auto [ptr2, ec2] = std::from_chars(fen[5].begin(), fen[5].end(), full_move_count);
+     if (ptr2 != fen[5].end())
++#endif
+     {
+         return false;
+     }
+diff --git a/src/network/network.cpp b/src/network/network.cpp
+index c543414..9c067e1 100644
+--- a/src/network/network.cpp
++++ b/src/network/network.cpp
+@@ -6,7 +6,9 @@
+ #include "network/accumulator.hpp"
+ #include "network/arch.hpp"
+ #include "network/inference.hpp"
++#ifndef __wasi__ // UCI over WASI: the net is compiled in by #embed, below
+ #include "third-party/incbin/incbin.h"
++#endif
+ 
+ #include <algorithm>
+ #include <bit>
+@@ -24,9 +26,18 @@
+ namespace NN
+ {
+ 
++#ifdef __wasi__
++// UCI over WASI: incbin's assembler block has no WebAssembly form. The net is used in place, so it keeps incbin's
++// alignment.
++alignas(64) static const unsigned char gNetData[] = {
++#embed EVALFILE
++};
++static const unsigned int gNetSize = sizeof(gNetData);
++#else
+ #undef INCBIN_ALIGNMENT
+ #define INCBIN_ALIGNMENT 64
+ INCBIN(Net, EVALFILE);
++#endif
+ 
+ const network& net = reinterpret_cast<const network&>(*gNetData);
+ 
+diff --git a/src/search/search.cpp b/src/search/search.cpp
+index 6da50fd..d35b124 100644
+--- a/src/search/search.cpp
++++ b/src/search/search.cpp
+@@ -37,6 +37,9 @@
+ #include <iostream>
+ #include <optional>
+ #include <tuple>
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ enum class SearchType : int8_t
+ {
+@@ -271,6 +274,19 @@ bool should_abort_search(SearchLocalState& local, const SearchSharedState& share
+         return false;
+     }
+ 
++#ifdef __wasi__
++    // UCI over WASI: the search runs on the UCI thread, so it hears stop here, at its limit check, and stops as the
++    // native UCI loop's stop does. A search with no limit is unbounded.
++    {
++        const auto& limits = shared.limits;
++        const bool unbounded = !limits.time && !limits.depth && !limits.mate && !limits.nodes;
++        if (uci_poll(unbounded) & UCI_STOP)
++        {
++            const_cast<SearchSharedState&>(shared).stop_searching = true;
++        }
++    }
++#endif
++
+     // A signal that we recieved a UCI stop command, or the threads voted to stop searching
+     if (shared.stop_searching)
+     {
+diff --git a/src/search/thread.cpp b/src/search/thread.cpp
+index 2411833..d81e8b5 100644
+--- a/src/search/thread.cpp
++++ b/src/search/thread.cpp
+@@ -47,6 +47,12 @@ void SearchThread::thread_loop()
+ 
+ void SearchThread::enqueue_task(std::function<void()> func)
+ {
++#ifdef __wasi__
++    // UCI over WASI: a module starts no thread, so the task runs here, on the UCI thread, and counts its latch down
++    // before the caller waits on it
++    func();
++    return;
++#endif
+     {
+         std::lock_guard lock(mutex);
+         tasks.push(std::move(func));
+@@ -57,6 +63,10 @@ void SearchThread::enqueue_task(std::function<void()> func)
+ 
+ void SearchThread::terminate()
+ {
++#ifdef __wasi__
++    // UCI over WASI: no thread runs a task loop
++    return;
++#endif
+     // due to the race of signaling the condition variable and destroying it we don't use enqueue_task here
+     std::lock_guard lock(mutex);
+     tasks.emplace([this]() { stop = true; });
+@@ -233,6 +243,13 @@ const SearchSharedState& SearchThreadPool::get_shared_state()
+ 
+ void SearchThreadPool::create_thread()
+ {
++#ifdef __wasi__
++    // UCI over WASI: the search thread is constructed on the UCI thread, which runs its tasks; the pool keeps it to
++    // the end, as the native thread keeps it to its loop's end
++    search_threads.push_back(std::make_unique<SearchThread>(search_threads.size(), shared_state).release());
++    return;
++#endif
++
+     std::promise<SearchThread*> promise;
+     auto future = promise.get_future();
+ 
+diff --git a/src/search/transposition/table.cpp b/src/search/transposition/table.cpp
+index 20fbbe9..7ad3203 100644
+--- a/src/search/transposition/table.cpp
++++ b/src/search/transposition/table.cpp
+@@ -114,6 +114,13 @@ void Table::clear(int thread_count)
+ {
+     // For extremely large hash sizes, we clear the table using multiple threads
+ 
++#ifdef __wasi__
++    // UCI over WASI: a module starts no thread, so the table is cleared here
++    (void)thread_count;
++    std::fill(&table[0], &table[size_], Bucket {});
++    return;
++#endif
++
+     std::vector<std::thread> threads;
+ 
+     for (int i = 0; i < thread_count; i++)
+@@ -150,7 +157,9 @@ size_t tt_index(uint64_t key, size_t tt_size)
+     // multiply the key by tt_size and extract out the highest order 64 bits. This gives a uniform distribution where
+     // the index is determined by the higher order bits of key, for any tt_size
+ 
+-#if defined(__GNUC__) && defined(__x86_64__)
++// UCI over WASI: size_t has 32 bits in a module, so the portable form's tt_size >> 32 is undefined; clang has a
++// 128-bit integer on WebAssembly too
++#if (defined(__GNUC__) && defined(__x86_64__)) || defined(__wasi__)
+     __extension__ using uint128 = unsigned __int128;
+     return (uint128(key) * uint128(tt_size)) >> 64;
+ #else
+diff --git a/src/third-party/Pyrrhic/stdendian.h b/src/third-party/Pyrrhic/stdendian.h
+index b8d20db..d799c62 100644
+--- a/src/third-party/Pyrrhic/stdendian.h
++++ b/src/third-party/Pyrrhic/stdendian.h
+@@ -8,7 +8,8 @@
+ #endif
+ 
+ /* Linux / GLIBC */
+-#if defined(__linux__) || defined(__GLIBC__) || defined(__CYGWIN__)
++/* UCI over WASI: wasi-libc has the same endian.h and byteswap.h. */
++#if defined(__linux__) || defined(__GLIBC__) || defined(__CYGWIN__) || defined(__wasi__)
+ #include <endian.h>
+ #include <byteswap.h>
+ #define __ENDIAN_DEFINED        1
+diff --git a/src/third-party/Pyrrhic/tbprobe.cpp b/src/third-party/Pyrrhic/tbprobe.cpp
+index 3502b8f..a85bc0d 100644
+--- a/src/third-party/Pyrrhic/tbprobe.cpp
++++ b/src/third-party/Pyrrhic/tbprobe.cpp
+@@ -245,7 +245,8 @@ static void* map_file(FD fd, map_t* mapping)
+     *mapping = statbuf.st_size;
+     void* data = mmap(NULL, statbuf.st_size, PROT_READ, MAP_SHARED, fd, 0);
+ 
+-#if defined(MADV_RANDOM)
++/* UCI over WASI: wasi-libc's mman emulation has no madvise. */
++#if defined(MADV_RANDOM) && !defined(__wasi__)
+     madvise(data, statbuf.st_size, MADV_RANDOM);
+ #endif
+ 
+diff --git a/src/uci/parse.h b/src/uci/parse.h
+index ec831d8..a7d8299 100644
+--- a/src/uci/parse.h
++++ b/src/uci/parse.h
+@@ -53,9 +53,16 @@ struct ToInt
+     bool operator()(std::string_view& token, Ctx&&... ctx)
+     {
+         int result {};
++#ifdef __wasi__
++        // UCI over WASI: from_chars takes pointers, which libc++'s ABI 2 string_view iterators are not
++        auto [ptr, _] = std::from_chars(token.data(), token.data() + token.size(), result);
++
++        if (ptr != token.data() + token.size())
++#else
+         auto [ptr, _] = std::from_chars(token.data(), token.end(), result);
+ 
+         if (ptr != token.end())
++#endif
+         {
+             return false;
+         }
+diff --git a/src/uci/uci.cpp b/src/uci/uci.cpp
+index 5cad8c4..54325d5 100644
+--- a/src/uci/uci.cpp
++++ b/src/uci/uci.cpp
+@@ -37,6 +37,9 @@
+ #include <sstream>
+ #include <string_view>
+ #include <vector>
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ namespace UCI
+ {
+@@ -257,8 +260,14 @@ auto Uci::options_handler()
+     return Options {
+         ButtonOption { "Clear Hash", [this] { handle_setoption_clear_hash(); } },
+         CheckOption { "UCI_Chess960", false, [this](bool value) { handle_setoption_chess960(value); } },
++#ifdef __wasi__
++        // UCI over WASI: a module starts no thread, and allocates at most this hash table
++        SpinOption { "Hash", 32, 1, 1024, [this](auto value) { handle_setoption_hash(value); } },
++        SpinOption { "Threads", 1, 1, 1, [this](auto value) { handle_setoption_threads(value); } },
++#else
+         SpinOption { "Hash", 32, 1, 262144, [this](auto value) { handle_setoption_hash(value); } },
+         SpinOption { "Threads", 1, 1, 1024, [this](auto value) { handle_setoption_threads(value); } },
++#endif
+         SpinOption { "MultiPV", 1, 1, MAX_LEGAL_MOVES, [this](auto value) { handle_setoption_multipv(value); } },
+         StringOption { "SyzygyPath", "<empty>", [this](auto value) { handle_setoption_syzygy_path(value); } },
+         ComboOption {
+@@ -477,7 +486,12 @@ void Uci::handle_go(const SearchLimits& limits)
+     search_thread_pool.set_position(position);
+ 
+     // launch search thread
++#ifdef __wasi__
++    // UCI over WASI: the search runs here, on the UCI thread, and hears its input through the poll
++    search_thread_pool.launch_search(limits);
++#else
+     main_search_thread = std::thread([this, limits]() { search_thread_pool.launch_search(limits); });
++#endif
+ }
+ 
+ void Uci::handle_setoption_clear_hash()
+@@ -535,10 +549,20 @@ void Uci::join_search_thread()
+ void Uci::process_input_stream(std::istream& is)
+ {
+     std::string line;
++#ifdef __wasi__
++    // UCI over WASI: the helper owns standard input, so the poll in the search sees a waiting line
++    (void)is;
++    for (const char* next; !quit && (next = uci_getline()) != nullptr;)
++    {
++        line = next;
++        process_input(line);
++    }
++#else
+     while (!quit && getline(is, line))
+     {
+         process_input(line);
+     }
++#endif
+ }
+ 
+ void Uci::process_input(std::string_view command)
+diff --git a/src/utility/huge_pages.h b/src/utility/huge_pages.h
+index 5d2d57f..88969d3 100644
+--- a/src/utility/huge_pages.h
++++ b/src/utility/huge_pages.h
+@@ -77,8 +77,13 @@ T* allocate_huge_page(std::size_t size)
+     return data;
+ #else
+     size = ((size + alignof(T) - 1) / alignof(T)) * alignof(T);
++#ifdef __wasi__
++    // UCI over WASI: libc++ on wasi-libc has no std::aligned_alloc, and C's aligned_alloc is the same call
++    return static_cast<T*>(::aligned_alloc(alignof(T), size));
++#else
+     return static_cast<T*>(std::aligned_alloc(alignof(T), size));
+ #endif
++#endif
+ }
+ 
+ template <typename T>
+diff --git a/src/utility/static_vector.h b/src/utility/static_vector.h
+index dde8591..20e7592 100644
+--- a/src/utility/static_vector.h
++++ b/src/utility/static_vector.h
+@@ -16,8 +16,15 @@ public:
+     using value_type = T;
+     using reference = T&;
+     using const_reference = const T&;
++#ifdef __wasi__
++    // UCI over WASI: the iterators are pointers, as libstdc++'s std::array has them; libc++'s ABI 2, which wasi-sdk
++    // builds, wraps them in a class
++    using iterator = T*;
++    using const_iterator = const T*;
++#else
+     using iterator = typename decltype(elems_)::iterator;
+     using const_iterator = typename decltype(elems_)::const_iterator;
++#endif
+     using reverse_iterator = std::reverse_iterator<iterator>;
+     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+ 

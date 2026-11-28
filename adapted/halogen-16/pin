@@ -1,0 +1,7 @@
+# Halogen 16, by Kieren Pearson. Its LICENSE is the GPL version 3, and no file names a later version.
+url=https://github.com/KierenP/Halogen
+commit=fa6d24a5423a20b4530723cd0f6f76d4da0581d8
+license=GPL-3.0-only
+module=halogen.wasm
+compare=bench
+nodes=4323379

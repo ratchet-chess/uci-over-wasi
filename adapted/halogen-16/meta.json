@@ -1,0 +1,93 @@
+{
+  "date": "2026-02-10",
+  "year": 2026,
+  "originalAuthors": [
+    "Kieren Pearson"
+  ],
+  "originalLanguage": "C++",
+  "originalLicenseNote": "Engine source under GPL-3.0; embeds the network 150521a9.nn from https://github.com/KierenP/Halogen-Networks (GPL-3.0), trained by temporal-difference learning and then on the engine's self-play games with bullet.",
+  "upstreamTag": "v16",
+  "cpwPage": "Halogen",
+  "blurb": "Halogen 16 is the February 2026 release of Kieren Pearson's GPL C++ UCI chess engine, first released in 2019 and developed with OpenBench testing. It pairs singular and negative extensions, ProbCut, razoring, reverse futility, null-move with zugzwang verification, late-move, futility and SEE pruning, upcoming-repetition detection, and pawn, non-pawn, piece-move and continuation correction histories with an embedded NNUE of 8 king buckets, a 1536-wide accumulator, then 16, 32 and 1 in 8 output buckets. Adapted to UCI over WASI on the poll helper, its SSE4 net code compiled to WebAssembly SIMD through SIMDe.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build on the C poll helper, with the thread pool's tasks run on the UCI thread and Threads fixed to 1; built by hand with the flags of the Makefile's release build, with the net laid out by the engine's own tool for its SSE4 path; that path compiled through SIMDe to 128-bit WebAssembly SIMD, with node counts equal to the native AVX2 build's; the hash index takes the 128-bit product that the native build uses, since size_t has 32 bits; no Syzygy tablebases; Hash capped at 1024 MB.",
+  "features": [
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Principal variation search with iterative deepening, MultiPV and aspiration windows."
+    },
+    {
+      "key": "Mate_Distance_Pruning",
+      "label": "Mate Distance Pruning",
+      "group": "Search",
+      "implementation": "Alpha and beta bounded by the mate distance from the root."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Quiescence verification at low depth, a full razor when the position looks hopeless."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility Pruning",
+      "group": "Search",
+      "implementation": "Static null-move pruning by a depth margin."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Null-move pruning with an enhanced verification search against zugzwang."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Capture search against a raised beta, guided by the hash entry."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "Rebel-style reduction of a node without a hash move."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Singular and multiple extensions, with multi-cut and negative extensions."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Reductions adjusted by history, cut nodes, improvement and captures."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Late-Move, Futility & SEE Pruning",
+      "group": "Search",
+      "implementation": "Late-move, futility and SEE pruning in the moves loop."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Histories & Correction",
+      "group": "Ordering",
+      "implementation": "Pawn, threat, capture, piece-move and continuation histories, plus pawn, non-pawn, piece-move and continuation correction histories."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Buckets with generations and generalized cutoffs, indexed by a 128-bit product."
+    },
+    {
+      "key": "NNUE",
+      "label": "NNUE",
+      "group": "Evaluation",
+      "implementation": "Embedded net: 8 mirrored king buckets of 768 inputs, 1536-wide accumulator, then 16, 32 and 1 in 8 output buckets with float hidden layers."
+    }
+  ]
+}
