@@ -1,0 +1,66 @@
+name: Diagnose a module bench
+
+# A one-off diagnostic on its own branch: the runner's CPU, the hashes of PlentyChess 8.0.0's module and net, and its
+# bench under Bun (with JavaScriptCore's wasm tiers limited one at a time) and under Node. Stockfish 19 is checked too.
+on:
+  push:
+    branches: [diag-gh-ci]
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: The runner
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(sse4_1|sse4_2|avx|avx2|fma|bmi2|avx512[a-z]*|amx[a-z_]*)$' | paste -sd' '
+          nproc
+          . /etc/os-release && echo "$PRETTY_NAME"
+          g++ --version | head -1
+          node --version
+          bun --revision
+
+      - name: Toolchains
+        run: tools/toolchains.sh fetch && tools/toolchains.sh unpack
+
+      - name: PlentyChess 8.0.0, fetched and built
+        run: |
+          tools/adapted.sh fetch adapted/plentychess-8.0.0
+          tools/adapted.sh check adapted/plentychess-8.0.0 || echo "check failed: $?"
+
+      - name: Hashes (expected wasm 276dda4037445d7a, processed.bin 5cedef19778f1bb7, net 663e0531ac71c6c7)
+        run: sha256sum tmp/adapted/plentychess-8.0.0/out/plentychess.wasm tmp/adapted/plentychess-8.0.0/processed.bin tmp/adapted/plentychess-8.0.0/0178r.bin
+
+      - name: The bench under Bun and Node (expected 3939470 nodes)
+        run: |
+          w=tmp/adapted/plentychess-8.0.0/out/plentychess.wasm
+          run() { echo "== $1"; shift; "$@" bench </dev/null 2>&1 | grep -E 'Nodes searched|rror' || true; }
+          run "bun" bun host/wasi/main.ts "$w"
+          run "bun, again" bun host/wasi/main.ts "$w"
+          run "bun, no OMG tier" env BUN_JSC_useOMGJIT=false bun host/wasi/main.ts "$w"
+          run "bun, no BBQ tier" env BUN_JSC_useBBQJIT=false bun host/wasi/main.ts "$w"
+          run "node" node --experimental-strip-types host/wasi/main.ts "$w"
+
+      - name: The module, for a local run
+        uses: actions/upload-artifact@v4
+        with:
+          name: plentychess-wasm
+          path: |
+            tmp/adapted/plentychess-8.0.0/out/plentychess.wasm
+            tmp/adapted/plentychess-8.0.0/processed.bin
+
+      - name: Stockfish 19
+        if: always()
+        run: |
+          tools/adapted.sh fetch adapted/stockfish-19
+          tools/adapted.sh check adapted/stockfish-19
