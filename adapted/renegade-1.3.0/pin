@@ -1,0 +1,8 @@
+# Renegade 1.3.0, by Krisztián Peőcz
+url=https://github.com/pkrisz99/Renegade
+commit=b7924536ff12d474efbc8c10effc866cf7db76c0
+dir=Renegade
+license=MIT
+module=renegade.wasm
+compare=bench
+nodes=5112160

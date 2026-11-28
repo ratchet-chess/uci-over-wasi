@@ -1,0 +1,197 @@
+diff --git a/Engine.cpp b/Engine.cpp
+index 10cef3f..143a743 100644
+--- a/Engine.cpp
++++ b/Engine.cpp
+@@ -1,4 +1,7 @@
+ #include "Engine.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ Engine::Engine(int argc, char* argv[]) {
+ 	Settings::UseUCI = !PrettySupport;
+@@ -66,7 +69,13 @@ void Engine::Start() {
+ 	std::string input;
+ 	PrintHeader();
+ 
++#ifdef __wasi__
++	// UCI over WASI: the helper owns stdin, so a line that waits during a search reaches the poll.
++	for (const char* line; (line = uci_getline()) != nullptr;) {
++		input = line;
++#else
+ 	while (std::getline(std::cin, input)) {
++#endif
+ 
+ 		// Process input
+ 		input = Trim(input);
+@@ -250,10 +259,18 @@ void Engine::HandleSetOption(const std::vector<std::string>& parts) {
+ 	}
+ 	else if (optionName == "hash") {
+ 		Settings::Hash = std::stoi(optionValue);
++#ifdef __wasi__
++		// UCI over WASI: a module's memory holds at most HashMax.
++		Settings::Hash = std::clamp(Settings::Hash, HashMin, HashMax);
++#endif
+ 		searchThreads.TranspositionTable.SetSize(Settings::Hash, Settings::Threads);
+ 	}
+ 	else if (optionName == "threads") {
+ 		Settings::Threads = std::stoi(optionValue);
++#ifdef __wasi__
++		// UCI over WASI: a module without threads searches on one.
++		Settings::Threads = 1;
++#endif
+ 		searchThreads.SetThreadCount(Settings::Threads);
+ 	}
+ 	else if (optionName == "uci_chess960") {
+diff --git a/Neural.cpp b/Neural.cpp
+index cb19c91..26a120e 100644
+--- a/Neural.cpp
++++ b/Neural.cpp
+@@ -8,7 +8,9 @@
+ #undef _MSC_VER
+ #endif
+ 
++#ifndef __wasi__
+ #include "incbin/incbin.h"
++#endif
+ 
+ #ifdef RENEGADE_MSVC
+ #pragma pop_macro("_MSC_VER")
+@@ -19,9 +21,17 @@
+ 
+ #if !defined(_MSC_VER) || defined(__clang__)
+ 
++#ifdef __wasi__
++// UCI over WASI: incbin's assembler block has no WebAssembly form, so the net is compiled in by #embed,
++// with incbin's alignment.
++alignas(64) static const unsigned char gDefaultNetworkData[] = {
++#embed NETWORK_NAME
++};
++#else
+ #undef INCBIN_ALIGNMENT
+ #define INCBIN_ALIGNMENT 64
+ INCBIN(DefaultNetwork, NETWORK_NAME);
++#endif
+ const NetworkRepresentation* Network = reinterpret_cast<const NetworkRepresentation*>(gDefaultNetworkData);
+ void LoadDefaultNetwork() {}
+ 
+diff --git a/Search.cpp b/Search.cpp
+index 34cf0da..bde7455 100644
+--- a/Search.cpp
++++ b/Search.cpp
+@@ -1,4 +1,7 @@
+ #include "Search.h"
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ 
+ // This is the main search code of Renegade. If you're reading this, you're probably interested in
+ // what this engine does under the hood, and I'm happy for that, feel free to try some ideas from here!
+@@ -31,7 +34,12 @@ void Search::StartThreads(const int threadCount) {
+ 	for (int i = 0; i < threadCount; i++) {
+ 		ThreadData& t = Threads.emplace_back();
+ 		t.threadId = i;
++#ifdef __wasi__
++		// UCI over WASI: a module starts no thread; StartSearch runs the search on the UCI thread.
++		LoadedThreadCount.fetch_add(1);
++#else
+ 		t.Thread = std::thread([&] { Loop(t); });
++#endif
+ 	}
+ 	while (LoadedThreadCount.load() < static_cast<int>(Threads.size())) {};
+ }
+@@ -44,12 +52,20 @@ void Search::StopThreads() {
+ 		lock.unlock();
+ 		t.CondVar.notify_one();
+ 	}
++#ifndef __wasi__
++	// UCI over WASI: a module started no thread to join.
+ 	for (ThreadData& t : Threads) t.Thread.join();
++#endif
+ 	Threads.clear();
+ }
+ 
+ void Search::SetThreadCount(const int threadCount) {
+ 	StopThreads();
++#ifdef __wasi__
++	// UCI over WASI: a module without threads searches on one.
++	StartThreads(1);
++	return;
++#endif
+ 	StartThreads(threadCount);
+ }
+ 
+@@ -101,6 +117,16 @@ void Search::StartSearch(Position& position, const SearchParams params) {
+ 		t.result = {};
+ 		t.ResetStatistics();
+ 	}
++#ifdef __wasi__
++	// UCI over WASI: the search runs here, on the UCI thread, as Loop runs it on the search thread.
++	{
++		ThreadData& t = Threads.front();
++		SearchMoves(t);
++		PrintBestmove(t.result.BestMove());
++		ActiveThreadCount.fetch_sub(1);
++		return;
++	}
++#endif
+ 	for (ThreadData& t : Threads) {
+ 		std::unique_lock<std::mutex> lock(t.Mutex);
+ 		t.Action = ThreadAction::Search;
+@@ -191,6 +217,14 @@ SearchConstraints Search::CalculateConstraints(const SearchParams params, const
+ }
+ 
+ bool Search::ShouldAbort(const ThreadData& t) {
++#ifdef __wasi__
++	// UCI over WASI: the search hears its input here, every 1024 nodes, as the time check reads the clock.
++	if (t.IsMainThread() && !t.singlethreaded && t.Nodes % 1024 == 0) {
++		const bool unbounded = Constraints.MaxDepth == -1 && Constraints.MaxNodes == -1
++			&& Constraints.SoftNodes == -1 && Constraints.SearchTimeMax == -1;
++		if (uci_poll(unbounded) & UCI_STOP) Aborting.store(true, std::memory_order_relaxed);
++	}
++#endif
+ 	if (Aborting.load(std::memory_order_relaxed) && (t.RootDepth > 1 || !t.IsMainThread())) return true;
+ 	if (!t.IsMainThread()) return false; // TODO: ensure limits when multithreaded
+ 
+diff --git a/Settings.h b/Settings.h
+index 7129181..0159bfb 100644
+--- a/Settings.h
++++ b/Settings.h
+@@ -9,10 +9,20 @@
+ 
+ constexpr int HashMin = 1;
+ constexpr int HashDefault = 64;
++#ifdef __wasi__
++// UCI over WASI: the largest table a module's 32-bit memory can hold beside the engine
++constexpr int HashMax = 1024;
++#else
+ constexpr int HashMax = 1048576;
++#endif
+ constexpr int ThreadsMin = 1;
+ constexpr int ThreadsDefault = 1;
++#ifdef __wasi__
++// UCI over WASI: a module without threads searches on one.
++constexpr int ThreadsMax = 1;
++#else
+ constexpr int ThreadsMax = 1024;
++#endif
+ constexpr bool Chess960Default = false;
+ constexpr bool ShowWDLDefault = true;
+ 
+diff --git a/Transpositions.cpp b/Transpositions.cpp
+index b29d665..f4cdade 100644
+--- a/Transpositions.cpp
++++ b/Transpositions.cpp
+@@ -151,6 +151,12 @@ void Transpositions::SetSize(const int megabytes, const int threadCount) {
+ // Clear entries, potentially in parallel, with as many threads as set to do search
+ // This speeds up initialization significantly for large hash sizes
+ void Transpositions::Clear(const int threadCount) {
++#ifdef __wasi__
++	// UCI over WASI: a module starts no thread, so the UCI thread clears the whole table.
++	std::memset(&Table[0], 0, TableSize * sizeof(TranspositionCluster));
++	CurrentGeneration = 0;
++	return;
++#endif
+ 	const uint64_t chunkSize = (TableSize + threadCount - 1) / threadCount; // ceil division
+ 	std::vector<std::thread> threads;
+ 

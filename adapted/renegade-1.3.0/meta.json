@@ -1,0 +1,92 @@
+{
+  "date": "2026-06-17",
+  "year": 2026,
+  "originalAuthors": [
+    "Krisztián Peőcz"
+  ],
+  "originalLanguage": "C++",
+  "originalLicenseNote": "Engine source under MIT; embeds the network renegade-net-36.bin from the engine's own repository, trained on its self-play games.",
+  "upstreamTag": "v1.3.0",
+  "blurb": "Renegade 1.3.0 is the June 2026 release of Krisztián Peőcz's MIT-licensed C++ UCI chess engine, developed since 2022 and trained purely on its own self-play games. It pairs magic bitboards, singular, double, triple and low-depth singular extensions, late-move, history, futility and SEE pruning, and pawn, non-pawn and follow-up correction histories with an embedded horizontally mirrored perspective NNUE of 14 king input buckets, a 1600x2 hidden layer and 8 material output buckets. Adapted to UCI over WASI on the poll helper.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build on the C poll helper (Threads fixed to 1); the net runs on the engine's portable path, vectorized by clang to 128-bit WebAssembly SIMD, with node counts equal to the native Haswell build's; Hash capped at 1024 MB.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "Pregenerated magic numbers with attack tables built at startup."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Principal variation search with iterative deepening and aspiration windows at higher depths."
+    },
+    {
+      "key": "Mate_Distance_Pruning",
+      "label": "Mate Distance Pruning",
+      "group": "Search",
+      "implementation": "Alpha and beta bounded by the mate distance from the root."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility Pruning",
+      "group": "Search",
+      "implementation": "Whole-node pruning when the corrected static eval clears beta by a depth margin."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Depth- and eval-scaled null-move reduction in the whole-node pruning stage."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "One ply less on cut nodes from depth 6 where the hash table holds no move."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Late-Move & History Pruning",
+      "group": "Search",
+      "implementation": "Late-move, history, futility and SEE pruning in the moves loop."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Singular, double and triple extensions with multi-cut and negative extensions, plus low-depth singular extensions."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Logarithmic reductions in 1/256-ply units, adjusted by history and node type."
+    },
+    {
+      "key": "Quiescence_Search",
+      "label": "Quiescence Search",
+      "group": "Search",
+      "implementation": "Captures with SEE and futility pruning in leaf nodes."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Histories & Correction",
+      "group": "Ordering",
+      "implementation": "Threat-aware quiet and capture histories and continuation history, with pawn, non-pawn and follow-up correction histories."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Clustered hash table with generations, bounds, static evals and TT-PV flags."
+    },
+    {
+      "key": "NNUE",
+      "label": "NNUE",
+      "group": "Evaluation",
+      "implementation": "Embedded integer perspective net: 768 inputs in 14 mirrored king buckets, 1600x2 hidden with SCReLU, 8 material output buckets."
+    }
+  ]
+}
