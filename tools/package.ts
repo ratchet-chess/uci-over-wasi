@@ -171,9 +171,12 @@ if (withSource) {
     for (const tool of ["adapted.sh", "toolchains.sh", "toolchains.txt"]) {
       cpSync(join(root, "tools", tool), join(stageDir, "tools", tool));
     }
-    const cargoDir = join(workDir, "cargo");
-    if (existsSync(cargoDir)) {
-      cpSync(cargoDir, join(stageDir, "cargo"), { recursive: true });
+    // what fetch.sh left that a build reads besides the tree: a Rust engine's crates, SIMDe's headers
+    for (const fetched of ["cargo", "simde"]) {
+      const dir = join(workDir, fetched);
+      if (existsSync(dir)) {
+        cpSync(dir, join(stageDir, fetched), { recursive: true });
+      }
     }
     writeFileSync(join(stageDir, "LICENSE.txt"), `${licenseHeader}${licenseBody.trimEnd()}\n`);
     const sourceName = `${id}-source.tar.gz`;
