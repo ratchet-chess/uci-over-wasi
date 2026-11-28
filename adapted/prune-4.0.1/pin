@@ -1,0 +1,7 @@
+# Prune 4.0.1, by Thomas Girolami and Joachim Bienvenue
+url=https://github.com/tgirolami09/Prune
+commit=3b9b84fde1ec6420300b7940824895d63ddc0253
+license=MIT
+module=prune.wasm
+compare=bench
+nodes=3874272

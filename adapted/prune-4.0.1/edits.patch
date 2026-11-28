@@ -1,0 +1,279 @@
+diff --git a/Fathom/src/stdendian.h b/Fathom/src/stdendian.h
+index 9f598b5..7ad64bc 100644
+--- a/Fathom/src/stdendian.h
++++ b/Fathom/src/stdendian.h
+@@ -69,7 +69,8 @@
+ #endif
+ 
+ /* Linux / GLIBC */
+-#if defined(__linux__) || defined(__GLIBC__) || defined(__CYGWIN__)
++/* UCI over WASI: wasi-libc has the same endian.h and byteswap.h. */
++#if defined(__linux__) || defined(__GLIBC__) || defined(__CYGWIN__) || defined(__wasi__)
+ #include <endian.h>
+ #include <byteswap.h>
+ #define __ENDIAN_DEFINED        1
+diff --git a/Fathom/src/tbprobe.c b/Fathom/src/tbprobe.c
+index 34634c3..fb9ec61 100644
+--- a/Fathom/src/tbprobe.c
++++ b/Fathom/src/tbprobe.c
+@@ -376,7 +376,8 @@ static void *map_file(FD fd, map_t *mapping)
+     perror("mmap");
+     return NULL;
+   }
+-#ifdef POSIX_MADV_RANDOM
++/* UCI over WASI: wasi-libc declares posix_madvise but has none. */
++#if defined(POSIX_MADV_RANDOM) && !defined(__wasi__)
+   /* Advise the kernel that we are likely to access this data
+      region randomly, so prefetch is not helpful. See
+      https://github.com/official-stockfish/Stockfish/pull/1829 */
+diff --git a/core/BestMoveFinder.cpp b/core/BestMoveFinder.cpp
+index d60b688..138ef35 100644
+--- a/core/BestMoveFinder.cpp
++++ b/core/BestMoveFinder.cpp
+@@ -13,6 +13,9 @@
+ #include <mutex>
+ #include <string>
+ #include <thread>
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ #include <cassert>
+ #include "tunables.hpp"
+ #include "wdlModel.hpp"
+@@ -170,9 +173,24 @@ void BestMoveFinder::HelperThread::wait_thread(){
+     cv.wait(lock, [this]{return !running;});
+ }
+ 
++#ifdef __wasi__
++// UCI over WASI: goCommand sets it for each search
++bool uciUnbounded = false;
++
++// UCI over WASI: the main thread hears its input every 1024 nodes, where the time check reads the clock.
++void BestMoveFinder::pollInput(const usefull& ss){
++    if(ss.mainThread && (ss.nodes & 1023) == 0 && (uci_poll(uciUnbounded) & UCI_STOP))
++        running = false;
++}
++#endif
++
+ template<int limitWay, bool isPV, bool isCalc>
+ int BestMoveFinder::quiescenceSearch(usefull& ss, GameState& state, int alpha, int beta, int relDepth){
+     if(limitWay == 0 && (ss.nodes & 1023) == 0 && getElapsedTime() >= hardBoundTime)running=false;
++#ifdef __wasi__
++    // UCI over WASI: the input, where the clock is read
++    pollInput(ss);
++#endif
+     if constexpr(limitWay == 1)if(ss.nodes >= hardBound)running=false;
+     if(!running || smp_abort)return 0;
+     if(ss.eval.isInsufficientMaterial() || state.rule50_count() > 100)return 0;
+@@ -294,6 +312,10 @@ int BestMoveFinder::negamax(usefull& ss, int depth, GameState& state, int alpha,
+     if(MAXIMUM-rootDist <= alpha)return MAXIMUM-rootDist;
+     if(MINIMUM+rootDist >= beta)return MINIMUM+rootDist;
+     if constexpr(limitWay == 0)if((ss.nodes & 1023) == 0 && getElapsedTime() >= hardBoundTime)running=false;
++#ifdef __wasi__
++    // UCI over WASI: the input, where the clock is read
++    pollInput(ss);
++#endif
+     if constexpr(limitWay == 1)if(ss.nodes >= hardBound)running = false;
+     if(!running || smp_abort)return 0;
+     if(state.rule50_count() >= 100 || ss.eval.isInsufficientMaterial()){
+diff --git a/core/BestMoveFinder.hpp b/core/BestMoveFinder.hpp
+index 243cc56..39798d9 100644
+--- a/core/BestMoveFinder.hpp
++++ b/core/BestMoveFinder.hpp
+@@ -32,6 +32,10 @@ extern StatVar<sbig, maxHistory, -maxHistory> capthistPostStat;
+ #endif
+ 
+ using timeMesure=chrono::high_resolution_clock;
++#ifdef __wasi__
++// UCI over WASI: a go with no limit the engine acts on, which only a stop ends
++extern bool uciUnbounded;
++#endif
+ //Class to find the best in a situation
+ class BestMoveFinder{
+     class usefull{
+@@ -115,6 +119,10 @@ private:
+     atomic<bool> smp_abort, smp_end;
+     void clear_helpers();
+     chrono::nanoseconds getElapsedTime();
++#ifdef __wasi__
++    // UCI over WASI: reads the input during a search
++    void pollInput(const usefull& ss);
++#endif
+     int16_t wdlFilterMoveInfos[maxMoves];
+     int wdlFilterNb;
+     template<int limitWay, bool isPV, bool isCalc>
+diff --git a/core/TranspositionTable.cpp b/core/TranspositionTable.cpp
+index 84337f1..149bd8f 100644
+--- a/core/TranspositionTable.cpp
++++ b/core/TranspositionTable.cpp
+@@ -178,10 +178,15 @@ void transpositionTable::reinit(size_t count){
+     size = ((size-1)/alignment+1)*alignment;
+ #ifdef _WIN32
+     table = (Cluster*)(_aligned_malloc(size, alignment));
++#elif defined(__wasi__)
++    // UCI over WASI: wasi-sdk's libc++ has no std::aligned_alloc; the C library's is the same call.
++    table = (Cluster*)::aligned_alloc(alignment, size);
+ #else
+     table = (Cluster*)std::aligned_alloc(alignment, size);
+ #endif
+-#ifdef MADV_HUGEPAGE
++// UCI over WASI: wasi-libc declares madvise but has none. The table keeps the native build's alignment, which
++// sets its size.
++#if defined(MADV_HUGEPAGE) && !defined(__wasi__)
+     madvise(table, count*sizeof(Cluster), MADV_HUGEPAGE);
+ #endif
+     count = size/sizeof(Cluster);
+diff --git a/core/embeder.cpp b/core/embeder.cpp
+index c81e761..5668464 100644
+--- a/core/embeder.cpp
++++ b/core/embeder.cpp
+@@ -1,5 +1,20 @@
+ #include "embeder.hpp"
++#ifdef __wasi__
++// UCI over WASI: incbin's assembler block has no WebAssembly form, so the files are compiled in by #embed, with
++// its alignment.
++extern "C" {
++#ifndef HCE
++alignas(64) const unsigned char baseModel[] = {
++#embed "model.bin"
++};
++#endif
++alignas(64) const unsigned char magicsData[] = {
++#embed "magics.out"
++};
++}
++#else
+ #ifndef HCE
+ BINARY_ASM_INCLUDE("model.bin", baseModel);
+ #endif
+-BINARY_ASM_INCLUDE("magics.out", magicsData);
+\ No newline at end of file
++BINARY_ASM_INCLUDE("magics.out", magicsData);
++#endif
+\ No newline at end of file
+diff --git a/core/engine.cpp b/core/engine.cpp
+index ce834e9..391023d 100644
+--- a/core/engine.cpp
++++ b/core/engine.cpp
+@@ -2,6 +2,9 @@
+ #include <sstream>
+ #include <tuple>
+ #include <thread>
++#ifdef __wasi__
++#include "uci_wasi.h"
++#endif
+ #include <algorithm>
+ // #include "util_magic.cpp"
+ #include "Const.hpp"
+@@ -145,13 +148,23 @@ public:
+ };
+ 
+ const Option Options[] = {
++#ifdef __wasi__
++    // UCI over WASI: the largest table a module's 32-bit memory can hold beside the engine
++    Option("Hash", "spin", "64", 1, 1024),
++#else
+     Option("Hash", "spin", "64", 1, 2147483647),
++#endif
+     Option("Move Overhead", "spin", "10", 0, 5000),
+     Option("Clear Hash", "button"),
+ #ifndef HCE
+     Option("nnueFile", "string", "embed"),
+ #endif
++#ifdef __wasi__
++    // UCI over WASI: a module without threads searches on one.
++    Option("Threads", "spin", "1", 1, 1),
++#else
+     Option("Threads", "spin", "1", 1, 512),
++#endif
+     Option("SyzygyPath", "string", "<empty>"),
+     Option("SyzygyProbeDepth", "spin", "1", 1, 100),
+     Option("SyzygyProbeLimit", "spin", "7", 0, 7),
+@@ -175,6 +188,10 @@ pair<int, int> computeAllotedTime(int wtime, int btime, int binc, int winc, bool
+ }
+ 
+ bestMoveResponse goCommand(vector<pair<string, string>> args, Chess& state, bool verbose, bool& printmove){
++#ifdef __wasi__
++    // UCI over WASI: a search with a limit, unless the end of this function says otherwise
++    uciUnbounded = false;
++#endif
+     if(!args.empty()){
+         if(args[0].first == "perft"){
+             printmove = false;
+@@ -217,6 +234,10 @@ bestMoveResponse goCommand(vector<pair<string, string>> args, Chess& state, bool
+             return bestMoveFinder.bestMove<2>(state.root, TM(depth, depth), state.movesFromRoot, verbose);
+         }
+     }
++#ifdef __wasi__
++    // UCI over WASI: a go with no limit the engine acts on; the poll ends it at the end of input.
++    uciUnbounded = true;
++#endif
+     return bestMoveFinder.bestMove<2>(state.root, TM(200, 200), state.movesFromRoot, verbose);
+ }
+ 
+@@ -499,7 +520,12 @@ void manageSearch(){
+                     if(parsed[i].first == "name"){
+                         bool incr=true;
+                         if(parsed[i].second == "Hash")
++#ifdef __wasi__
++                            // UCI over WASI: a module's memory holds at most 1024 MB of table.
++                            bestMoveFinder.reinit(min(max(stoi(parsed[i+1].second), 1), 1024)*hashMul);
++#else
+                             bestMoveFinder.reinit(stoi(parsed[i+1].second)*hashMul);
++#endif
+                         else if(parsed[i].second == "Move Overhead")
+                             moveOverhead = stoi(parsed[i+1].second);
+                         else if(parsed[i].second == "Clear Hash"){
+@@ -508,6 +534,10 @@ void manageSearch(){
+                         }
+                         else if(parsed[i].second == "Threads"){
+                             int newT = stoi(parsed[i+1].second);
++#ifdef __wasi__
++                            // UCI over WASI: a module without threads searches on one.
++                            newT = 1;
++#endif
+                             bestMoveFinder.setThreads(newT);
+                             nbThreads = newT;
+                         }
+@@ -616,6 +646,25 @@ void manageSearch(){
+         }
+         if(!stop_all && endQ == startQ){
+             fflush(stdout);
++#ifdef __wasi__
++            // UCI over WASI: the input thread's work for one line, on this thread. A line that arrived
++            // during a search waits in the helper's queue.
++            const char* line = uci_getline();
++            string com = line == nullptr ? "quit" : line;
++            if(com == "stop"){
++                bestMoveFinder.running = false;
++            }else if(com == "isready"){
++                printf("readyok\n");
++            }else if(com == "quit"){
++                bestMoveFinder.running = false;
++                stop_all = true;
++            }else{
++                inpQueue[endQ%sizeQ] = com;
++                endQ++;
++            }
++            fflush(stdout);
++            continue;
++#endif
+             unique_lock<mutex> lock(mtx_new_command);
+             cv_new_command.wait(lock, []{return endQ != startQ || stop_all;});
+         }
+@@ -642,10 +691,15 @@ int main(int argc, char** argv){
+             endQ++;
+         }
+     }
++#ifndef __wasi__
++    // UCI over WASI: a module starts no input thread; manageSearch reads each line through the helper.
+     if(seeInput)
+         t = thread(&manageInput);
++#endif
+     manageSearch();
++#ifndef __wasi__
+     if(seeInput)
+         t.join();
++#endif
+     clear_table();   
+ }
