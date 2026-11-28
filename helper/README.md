@@ -70,11 +70,11 @@ return before it. Each file's header has the rules in full.
 - **A net on x86 intrinsics.** wasi-sdk refuses `immintrin.h`, so the engine builds on its portable path, which
   `-msimd128` lets clang vectorize. Portable vector source, such as Rust's `std::simd`, compiles to 128-bit steps
   as written. For a faster net, compile the engine's SSE path through SIMDe, whose x86 headers lower to
-  `wasm_simd128.h` (Prune 4.0.1 in `adapted/`). Define the engine's `__SSE*__` macros, and give the engine a
+  `wasm_simd128.h` (Prune 4.0.1, Halogen 16 in `adapted/`). Define the engine's `__SSE*__` macros, and give the engine a
   shim header that includes SIMDe's `x86/sse4.1.h` in place of `immintrin.h`; SIMDe reads those macros only on
   an x86 target. Write the shim in `tmp/adapted/<folder>/shim/`, because `tools/package.ts` ships the copyright
-  lines of the SIMDe headers it includes. Measure the result against the portable path: SIMDe's AVX2 emulation
-  can be the slower one (Renegade 1.3.0).
+  lines of the SIMDe headers it includes. Measure the result against the portable path, which can be the faster
+  one: against SIMDe's AVX2 emulation (Renegade 1.3.0), and against an SSE path too (Caissa 2.0).
 - **An engine's paths can search different nodes.** Where its AVX2 and 128-bit paths differ natively, give the
   native build the module's vector width (Prune 4.0.1, `x86-64-v2`).
 - **A net's 128-bit path needs the 128-bit weight layout.** An engine that permutes its weights for AVX2 keeps a
@@ -91,7 +91,13 @@ return before it. Each file's header has the rules in full.
 - **Relaxed SIMD** (`-mrelaxed-simd`) is allowed only in its exact form (`docs/uci-over-wasi.md` § Form). The
   module then declares `requires=relaxed-simd`, and its node signature must be equal on x86 and on ARM.
 - **Sizes have 32 bits.** `size_t`, `long` and Rust's `usize` are 32-bit types in a module. Where a value
-  needs 64 bits, name a 64-bit type. A table that is compiled in with 64-bit entries is one such place.
+  needs 64 bits, name a 64-bit type. A table that is compiled in with 64-bit entries is one such place, and a
+  `size_t` shifted right by 32 another: the shift is undefined (Halogen 16's hash index).
+- **libc++ is built with its ABI version 2.** Its `std::array` and `std::string_view` iterators are classes, not
+  pointers as in libstdc++. Where the engine takes them as pointers, name the pointer under the guard.
+- **A Rust mask wider than 16 lanes.** The pinned Rust returns `to_bitmask()` of such a mask with its 16-lane
+  groups in reverse order in WebAssembly SIMD. Build the bitmask from 16-lane masks (Cinder 0.6.1). A perft
+  against the native build finds the wrong move generation it causes.
 
 ## Keeping threads
 
