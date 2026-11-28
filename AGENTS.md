@@ -53,7 +53,7 @@ tools/adapted.sh check adapted/<folder>                   # both builds, their c
 
 ## Adapted engines
 
-- **One folder holds one engine at one version:** `pin`, `edits.patch`, `build.sh`, and `meta.json` (curated provenance and 8-15 CPW features, checked by `tools/meta.ts --all --check`). `tools/adapted.sh` states the build files' form.
+- **One folder holds one engine at one version:** `pin`, `edits.patch`, `build.sh`, and `meta.json` (curated provenance and 8-15 CPW features, checked by `tools/meta.ts --all --check`). A `NOTICE` holds a notice the engine's files ask to travel with it, such as a training-data credit; `tools/package.ts` appends it to the license file. `tools/adapted.sh` states the build files' form.
 - **Read the engine's license in its own source,** and write it in the pin file. The folder's files are under that license.
 - **Adapt only an engine whose license permits the edits and their publication.**
 - **Put every edit under the target's guard,** `#ifdef __wasi__` or `cfg(target_os = "wasi")`. Open its comment with `UCI over WASI:`.

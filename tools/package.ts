@@ -4,7 +4,8 @@
  * Packages a checked adapted engine build into `<out>/<id>/` with:
  *   <id>.wasm           the WASI module, renamed from `pin`'s `module=` to the folder id
  *   <id>.meta.json      public EngineMeta provenance built by tools/meta.ts
- *   <id>-LICENSE.txt    upstream copyright/license notice (and GPL text for GPL engines), then SIMDe's if the build used it
+ *   <id>-LICENSE.txt    upstream copyright/license notice (and GPL text for GPL engines), then the folder's NOTICE if it
+ *                       has one, then SIMDe's if the build used it
  *   <id>-source.tar.gz  Corresponding Source archive for GPL/LGPL/AGPL engines
  *   SHA256SUMS          sha256 digests for all packaged files
  *
@@ -168,6 +169,10 @@ if (existsSync(simdeDir)) {
   ].join("\n");
 }
 
+// a notice the engine's own files ask to travel with it, beyond its license file, such as a training-data credit
+const noticePath = join(absFolder, "NOTICE");
+const folderNotice = existsSync(noticePath) ? `\n---\n\n${readFileSync(noticePath, "utf8").trimEnd()}\n` : "";
+
 const licenseHeader = [
   `Engine: ${id}`,
   `Upstream: ${pin.url} (commit ${pin.commit})`,
@@ -202,7 +207,7 @@ packaged.push(wasmName);
 writeFileSync(join(outDir, metaName), metaJson);
 packaged.push(metaName);
 
-writeFileSync(join(outDir, licenseName), `${licenseHeader}${licenseBody.trimEnd()}\n${simdeNotice}`);
+writeFileSync(join(outDir, licenseName), `${licenseHeader}${licenseBody.trimEnd()}\n${folderNotice}${simdeNotice}`);
 packaged.push(licenseName);
 
 // Corresponding Source for GPL/LGPL/AGPL engines: the edited tree, the folder, the helper, and the scripts and
@@ -234,7 +239,7 @@ if (withSource) {
         cpSync(dir, join(stageDir, fetched), { recursive: true, filter: (p) => p !== unpacked });
       }
     }
-    writeFileSync(join(stageDir, "LICENSE.txt"), `${licenseHeader}${licenseBody.trimEnd()}\n${simdeNotice}`);
+    writeFileSync(join(stageDir, "LICENSE.txt"), `${licenseHeader}${licenseBody.trimEnd()}\n${folderNotice}${simdeNotice}`);
     const sourceName = `${id}-source.tar.gz`;
     execFileSync("tar", ["-czf", join(outDir, sourceName), "-C", stageRoot, `${id}-source`], {
       stdio: ["ignore", "pipe", "inherit"],
