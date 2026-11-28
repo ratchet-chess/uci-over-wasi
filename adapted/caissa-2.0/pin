@@ -1,0 +1,7 @@
+# Caissa 2.0, by Michał Witanowski
+url=https://github.com/Witek902/Caissa
+commit=bb725799e9b19ebdaa0d584f5433fc1c3019e349
+license=MIT
+module=caissa.wasm
+compare=bench
+nodes=6202576

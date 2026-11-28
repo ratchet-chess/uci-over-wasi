@@ -1,0 +1,98 @@
+{
+  "date": "2026-09-19",
+  "year": 2026,
+  "originalAuthors": [
+    "Michał Witanowski"
+  ],
+  "originalLanguage": "C++",
+  "originalLicenseNote": "Engine source under MIT; embeds the network eval-ml-8-152B-spsa.pnn from https://github.com/Witek902/Caissa-Nets (MIT, as its README states for every network file), trained on the engine's self-play games.",
+  "upstreamTag": "2.0",
+  "blurb": "Caissa 2.0 is the September 2026 release of Michał Witanowski's MIT-licensed C++ UCI chess engine, written from scratch since 2021 and trained on its own self-play games. It pairs magic bitboards, singular, double and triple extensions, ProbCut, razoring, null-move, late-move and history pruning, and pawn, non-pawn and continuation correction histories with an embedded NNUE of 32 king buckets, a 1536-wide pairwise accumulator and 8 output buckets. Adapted to UCI over WASI on the poll helper, with its net on the portable path that clang vectorizes to WebAssembly SIMD.",
+  "fidelityNotes": "Single-threaded plain wasm32-wasip1 build on the C poll helper, with the search on the UCI thread and Threads fixed to 1; built by hand with the flags of CMake's Final configuration; the net runs on the engine's portable path, vectorized by clang to 128-bit WebAssembly SIMD, with node counts equal to the native AVX2 build's; denormals are kept, where the native build flushes them; no Syzygy tablebases; Hash capped at 1024 MB.",
+  "features": [
+    {
+      "key": "Magic_Bitboards",
+      "label": "Magic Bitboards",
+      "group": "Board",
+      "implementation": "Magic bitboards for slider attacks, with a BMI2 PEXT path natively."
+    },
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Principal variation search with iterative deepening and MultiPV."
+    },
+    {
+      "key": "Aspiration_Windows",
+      "label": "Aspiration Windows",
+      "group": "Search",
+      "implementation": "Windows scaled by the score, widened on each fail."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Null-move pruning; at high depth a null-move fail-high reduces the node's depth instead of cutting."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Quiescence verification at low depth when the eval is far below alpha."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Capture search against a raised beta, also in check, guided by the hash entry."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "One ply less from depth 3 without a deep enough hash entry."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Singular, double and triple extensions, with negative extensions on cut nodes and fail-highs."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Table reductions adjusted by history statistics and node type."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Late-Move & History Pruning",
+      "group": "Search",
+      "implementation": "Late-move, history and futility pruning in the moves loop."
+    },
+    {
+      "key": "Quiescence_Search",
+      "label": "Quiescence Search",
+      "group": "Search",
+      "implementation": "Captures with futility pruning in leaf nodes."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Histories & Correction",
+      "group": "Ordering",
+      "implementation": "Quiet and continuation histories with killer and counter moves, plus pawn, non-pawn and continuation correction histories."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Clusters of three entries with generations, bounds and static evals."
+    },
+    {
+      "key": "NNUE",
+      "label": "NNUE",
+      "group": "Evaluation",
+      "implementation": "Embedded integer net: 32 king buckets of 768 inputs, 1536-wide accumulator with pairwise clipped ReLU, sparse first layer, then 16, 32 and 1 in 8 output buckets."
+    }
+  ]
+}
