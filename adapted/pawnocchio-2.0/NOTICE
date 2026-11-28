@@ -1,0 +1,4 @@
+The network pp_new2.nnue is from pawnocchio-nets (https://github.com/JonathanHallstrom/pawnocchio-nets), at
+commit bbaf11347430bfedbf27461a1c3c2b360aa5e930, by Jonathan Hallström. Its README states it is "provided
+under CC-BY-SA", and its LICENSE is Creative Commons Attribution-ShareAlike 4.0 International
+(https://creativecommons.org/licenses/by-sa/4.0/). The module contains it unmodified.

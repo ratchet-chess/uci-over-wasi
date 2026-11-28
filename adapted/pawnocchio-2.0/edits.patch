@@ -1,0 +1,293 @@
+diff --git a/build.zig b/build.zig
+index 540f564..1c9667d 100644
+--- a/build.zig
++++ b/build.zig
+@@ -126,6 +126,15 @@ fn addExecutable(
+         .linkage = options.link_mode,
+     });
+     configureArtifact(b, exe, options, inputs);
++    if (options.target.result.os.tag == .wasi) {
++        // UCI over WASI: the module reads its input through the C poll helper, compiled in from the path given,
++        // and searches on the main thread, with the stack std.Thread gives a native search thread
++        exe.stack_size = 16 << 20;
++        if (b.option([]const u8, "uci_wasi_c", "the C poll helper's uci_wasi.c, for a WASI module")) |helper| {
++            exe.root_module.link_libc = true;
++            exe.root_module.addCSourceFile(.{ .file = .{ .cwd_relative = helper }, .flags = &.{"-O2"}, .language = .c });
++        }
++    }
+     if (options.use_numa) {
+         exe.root_module.linkSystemLibrary("numa", .{});
+     }
+diff --git a/src/Limits.zig b/src/Limits.zig
+index 3d17f85..6442d56 100644
+--- a/src/Limits.zig
++++ b/src/Limits.zig
+@@ -39,9 +39,16 @@ root_depth: i32 = 0,
+ min_depth: i32 = 0,
+ max_score: i16 = std.math.maxInt(i16),
+ min_score: i16 = std.math.minInt(i16),
++// UCI over WASI: the go set no limit the search acts on, so the end of input stops it
++uci_unbounded: bool = false,
+ 
+ const Limits = @This();
+ 
++// UCI over WASI: the C poll helper, which the build compiles in
++const IS_WASI = @import("builtin").os.tag == .wasi;
++const UCI_STOP: c_int = 1;
++extern fn uci_poll(unbounded: c_int) c_int;
++
+ pub fn elapsed(self: *const Limits) u64 {
+     const now = std.Io.Timestamp.now(self.io, .awake);
+     const duration = self.start_timestamp.durationTo(now);
+@@ -87,6 +94,14 @@ pub inline fn checkSearch(self: *Limits, nodes: u64) bool {
+         return true;
+     }
+     if (nodes % 1024 == 0) {
++        if (IS_WASI) {
++            // UCI over WASI: the search runs on the UCI thread, so it hears stop here, at its periodic check, and
++            // stops as the UCI loop's stop does
++            if (uci_poll(@intFromBool(self.uci_unbounded)) & UCI_STOP != 0) {
++                root.engine.stopSearch();
++                return true;
++            }
++        }
+         if (root.engine.shouldStopSearching()) {
+             return true;
+         }
+diff --git a/src/Searcher.zig b/src/Searcher.zig
+index c045b0a..fe00010 100644
+--- a/src/Searcher.zig
++++ b/src/Searcher.zig
+@@ -102,7 +102,8 @@ const EvalPair = struct {
+ 
+ const STACK_PADDING = history.HIGHEST_CONTHIST_OFFSET;
+ 
+-search_id: std.atomic.Value(u64) align(std.atomic.cache_line) = .init(0),
++// UCI over WASI: wasm32 has no 64-bit atomics without the threads proposal; the id is only compared for equality
++search_id: std.atomic.Value(if (@import("builtin").os.tag == .wasi) u32 else u64) align(std.atomic.cache_line) = .init(0),
+ is_ready: bool align(std.atomic.cache_line) = false,
+ nodes: u64 align(std.atomic.cache_line),
+ hashes: [MAX_PLY + 8]u64,
+diff --git a/src/ThreadPool.zig b/src/ThreadPool.zig
+index 7e0814a..2988d86 100644
+--- a/src/ThreadPool.zig
++++ b/src/ThreadPool.zig
+@@ -30,6 +30,8 @@ const numa = @import("numa.zig");
+ const nnue = root.nnue;
+ 
+ const IS_WINDOWS = @import("builtin").os.tag == .windows;
++// UCI over WASI: a module starts no thread, so a thread's action runs where it is woken, on the UCI thread
++const IS_WASI = @import("builtin").os.tag == .wasi;
+ const MAX_ALIGN = if (IS_WINDOWS) std.atomic.cache_line else 2 << 20;
+ 
+ fn adviseHugePages(p: anytype) !void {
+@@ -135,7 +137,7 @@ const Thread = struct {
+             .idx = idx,
+             .io = io,
+         };
+-        self.thread = try std.Thread.spawn(.{}, loop, .{self});
++        if (!IS_WASI) self.thread = try std.Thread.spawn(.{}, loop, .{self});
+         return self;
+     }
+ 
+@@ -185,6 +187,25 @@ const Thread = struct {
+     }
+ 
+     pub fn wake(self: *Thread, action: ThreadAction) void {
++        if (IS_WASI) {
++            // UCI over WASI: what loop does for the action, here
++            switch (action) {
++                .search => self.searcher.startSearch(self.search_params, self.search_main, self.search_quiet),
++                .reset => {
++                    @memset(std.mem.asBytes(self.searcher), 0);
++                    self.searcher.correction_histories = self.correction_histories;
++                    self.searcher.histories.pawn = self.pawn_histories;
++                    self.searcher.eval_context.initForThread(self.idx);
++                    self.searcher.histories.reset();
++                    self.searcher.tt = self.tt;
++                    if (self.reset_tt_slice.len > 0) {
++                        @memset(std.mem.sliceAsBytes(self.reset_tt_slice), 0);
++                    }
++                },
++                else => {},
++            }
++            return;
++        }
+         self.mutex.lockUncancelable(self.io);
+         self.action = action;
+         self.mutex.unlock(self.io);
+@@ -200,6 +221,7 @@ const Thread = struct {
+     }
+ 
+     pub fn signalAndAwaitShutdown(self: *Thread) void {
++        if (IS_WASI) return; // UCI over WASI: no thread to end
+         self.wake(.exit);
+         self.mutex.lockUncancelable(self.io);
+         while (!self.exited) {
+diff --git a/src/command_line.zig b/src/command_line.zig
+index 53b3668..f1b556a 100644
+--- a/src/command_line.zig
++++ b/src/command_line.zig
+@@ -32,6 +32,8 @@ const CMD_SUGGEST_BASE: usize = 120;
+ const CMD_SUGGEST_EXTRA: usize = 20;
+ const SHOW_SUGGESTION_COST: bool = false;
+ const TOOLS_ONLY = build_options.tools_only;
++// UCI over WASI: the threaded datagen and analyse tools, and the tools that map files, are left out of a module
++const IS_WASI = @import("builtin").os.tag == .wasi;
+ 
+ const Command = enum {
+     help,
+@@ -236,7 +238,7 @@ pub fn handle(init: std.process.Init, version: []const u8) !bool {
+                     handleHelp(version, threads);
+                     return true;
+                 },
+-                .datagen => if (TOOLS_ONLY) {
++                .datagen => if (TOOLS_ONLY or IS_WASI) {
+                     writeLog("datagen is unavailable in this build\n", .{});
+                 } else {
+                     try handleDatagen(init.io, init.gpa, &args, threads);
+@@ -249,10 +251,22 @@ pub fn handle(init: std.process.Init, version: []const u8) !bool {
+                 .pgntovf => try handlePgntovf(init.io, init.gpa, &args),
+                 .epdtovf => try handleEpdtovf(init.io, init.gpa, &args),
+                 .vftotxt => try handleVftotxt(init.io, init.gpa, &args),
+-                .analyse => try handleAnalyse(init.io, init.gpa, &args),
++                .analyse => if (IS_WASI) {
++                    writeLog("analyse is unavailable in this build\n", .{});
++                } else {
++                    try handleAnalyse(init.io, init.gpa, &args);
++                },
+                 .@"relabel-tb" => try handleRelabelTb(init.io, init.gpa, &args),
+-                .@"relabel-chonker" => try handleRelabelChonker(init.io, init.gpa, &args),
+-                .sanitise => try handleSanitise(init.io, init.gpa, &args),
++                .@"relabel-chonker" => if (IS_WASI) {
++                    writeLog("relabel-chonker is unavailable in this build\n", .{});
++                } else {
++                    try handleRelabelChonker(init.io, init.gpa, &args);
++                },
++                .sanitise => if (IS_WASI) {
++                    writeLog("sanitise is unavailable in this build\n", .{});
++                } else {
++                    try handleSanitise(init.io, init.gpa, &args);
++                },
+                 .bench => try handleBench(init.io, init.gpa, &args),
+             }
+             return true;
+diff --git a/src/main.zig b/src/main.zig
+index 6fd6761..13b8612 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -79,6 +79,17 @@ fn parseUCIBool(value: []const u8) ?bool {
+     return null;
+ }
+ 
++// UCI over WASI: the C poll helper's line read, which the build compiles in
++const IS_WASI = @import("builtin").os.tag == .wasi;
++extern fn uci_getline() ?[*:0]const u8;
++
++fn wasiLine(buf: []u8) ?usize {
++    const line = std.mem.span(uci_getline() orelse return null);
++    const len = @min(line.len, buf.len);
++    @memcpy(buf[0..len], line[0..len]);
++    return len;
++}
++
+ pub fn main(init: std.process.Init) !void {
+     var threaded_io = std.Io.Threaded.init(init.gpa, .{
+         .environ = init.minimal.environ,
+@@ -142,15 +153,19 @@ pub fn main(init: std.process.Init) !void {
+ 
+     var weird_tcs: bool = IS_POTENTIAL_ANDROID_BUILD;
+     var show_wdl: bool = false;
+-    loop: while (reader.interface.streamDelimiter(&line_writer, '\n') catch |e| switch (e) {
++    // UCI over WASI: the helper owns standard input, so the poll in the search sees a waiting line; a module copies
++    // each line it reads into the line buffer
++    loop: while (if (IS_WASI) wasiLine(line_buf) else reader.interface.streamDelimiter(&line_writer, '\n') catch |e| switch (e) {
+         error.EndOfStream => null,
+         else => blk: {
+             std.debug.print("WARNING: encountered '{any}'\n", .{e});
+             break :blk 0;
+         },
+     }) |line_len| {
+-        defer _ = line_writer.consumeAll();
+-        std.debug.assert(try reader.interface.discardDelimiterInclusive('\n') == 1);
++        defer if (!IS_WASI) {
++            _ = line_writer.consumeAll();
++        };
++        if (!IS_WASI) std.debug.assert(try reader.interface.discardDelimiterInclusive('\n') == 1);
+         const line = std.mem.trim(u8, line_buf[0..line_len], &std.ascii.whitespace);
+         for (line) |c| {
+             if (!std.ascii.isPrint(c)) {
+@@ -167,8 +182,14 @@ pub fn main(init: std.process.Init) !void {
+         if (std.ascii.eqlIgnoreCase(command, "uci")) {
+             write("id name pawnocchio {s}\n", .{version});
+             write("id author Jonathan Hallström\n", .{});
+-            write("option name Hash type spin default 16 min 1 max 1048576\n", .{});
+-            write("option name Threads type spin default 1 min 1 max 65535\n", .{});
++            if (IS_WASI) {
++                // UCI over WASI: the hash table a module can allocate, and no thread to start
++                write("option name Hash type spin default 16 min 1 max 1024\n", .{});
++                write("option name Threads type spin default 1 min 1 max 1\n", .{});
++            } else {
++                write("option name Hash type spin default 16 min 1 max 1048576\n", .{});
++                write("option name Threads type spin default 1 min 1 max 65535\n", .{});
++            }
+             write("option name Move Overhead type spin default {} min 1 max 10000\n", .{overhead / std.time.ns_per_ms});
+             write("option name Contempt type spin default {} min -10000 max 10000\n", .{contempt});
+             write("option name UCI_Chess960 type check default false\n", .{});
+@@ -221,7 +242,8 @@ pub fn main(init: std.process.Init) !void {
+                     writeLog("must have at least 1mb of hash\n", .{});
+                     continue;
+                 }
+-                try root.engine.setTTSize(size);
++                // UCI over WASI: the hash table's size is capped, and is a 32-bit usize
++                if (IS_WASI) try root.engine.setTTSize(@intCast(@min(size, 1024))) else try root.engine.setTTSize(size);
+             }
+ 
+             if (std.ascii.eqlIgnoreCase("Threads", option_name)) {
+@@ -233,7 +255,8 @@ pub fn main(init: std.process.Init) !void {
+                     writeLog("must have at least one thread\n", .{});
+                     continue;
+                 }
+-                try root.engine.setThreadCount(count);
++                // UCI over WASI: a module starts no thread
++                if (IS_WASI) try root.engine.setThreadCount(1) else try root.engine.setThreadCount(count);
+             }
+ 
+             if (std.ascii.eqlIgnoreCase("MinDepth", option_name)) {
+@@ -470,7 +493,8 @@ pub fn main(init: std.process.Init) !void {
+                         write("completed {s}\n", .{position.fen});
+                     }
+ 
+-                    const actual_nodes = @atomicLoad(u64, &nodes, .seq_cst);
++                    // UCI over WASI: wasm32 has no 64-bit atomics without the threads proposal, and one thread
++                    const actual_nodes = if (IS_WASI) nodes else @atomicLoad(u64, &nodes, .seq_cst);
+                     const elapsed_ns = @as(u64, @intCast(start_time.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds));
+                     write("Nodes: {} in {}ms ({} nps)\n", .{ actual_nodes, elapsed_ns / std.time.ns_per_ms, @as(u128, actual_nodes) * std.time.ns_per_s / elapsed_ns });
+                     continue :loop;
+@@ -603,6 +627,12 @@ pub fn main(init: std.process.Init) !void {
+                 limits.hard_nodes = max_modes * 128;
+             }
+ 
++            if (IS_WASI) {
++                // UCI over WASI: a go with no limit the search acts on is unbounded
++                limits.uci_unbounded = my_time_opt == null and move_time_opt == null and max_depth_opt == null and
++                    hard_nodes_opt == null and soft_nodes_opt == null and mate_score_opt == null;
++            }
++
+             if (mate_score_opt) |mate_value| {
+                 if (mate_value < 0) {
+                     limits.min_score = mate_value;
+diff --git a/src/nnue/sparse.zig b/src/nnue/sparse.zig
+index aace12b..fb3ded2 100644
+--- a/src/nnue/sparse.zig
++++ b/src/nnue/sparse.zig
+@@ -65,7 +65,8 @@ pub inline fn findNonZeroIndices(
+         inline for (0..UNROLL * simd.vecSize(i32) / 8) |j| {
+             const byte = mask >> (8 * j) & 0xff;
+ 
+-            const mask_indices = NONZERO_INDICES[byte];
++            // UCI over WASI: an index is a usize, which has 32 bits in a module
++            const mask_indices = NONZERO_INDICES[if (@import("builtin").os.tag == .wasi) @as(usize, @intCast(byte)) else byte];
+ 
+             const actual_indices: [8]u16 = mask_indices + base;
+             @memcpy(indices[count..][0..8], &actual_indices);

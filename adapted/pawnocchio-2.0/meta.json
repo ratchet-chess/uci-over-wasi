@@ -1,0 +1,92 @@
+{
+  "date": "2026-06-27",
+  "year": 2026,
+  "originalAuthors": [
+    "Jonathan Hallström"
+  ],
+  "originalLanguage": "Zig",
+  "originalLicenseNote": "Engine source under GPL-3.0-or-later; embeds the network pp_new2.nnue from https://github.com/JonathanHallstrom/pawnocchio-nets (CC BY-SA 4.0), whose notice the package's license file carries.",
+  "upstreamTag": "v2.0",
+  "blurb": "pawnocchio 2.0 is the June 2026 release of Jonathan Hallström's GPL Zig UCI chess engine, which its README calls the strongest written in Zig, trained with bullet. It pairs singular, double and triple extensions, ProbCut, razoring, reverse futility, null-move, late-move and futility pruning, upcoming-repetition detection, and continuation histories with correction histories with an embedded NNUE of threat, pawn-pair and 16 king-bucketed piece-square inputs, a 768-wide accumulator, then 16, 32 and 1 in 8 output buckets. Adapted to UCI over WASI on the C poll helper, its Zig vectors compiled to WebAssembly SIMD.",
+  "fidelityNotes": "Single-threaded wasm32-wasi build on the C poll helper, compiled in by the engine's own build, with each thread-pool action run on the UCI thread and Threads fixed to 1; the engine's Zig vectors compiled to 128-bit WebAssembly SIMD, with node counts equal to the native x86-64-v3 build's and to the release's bench; the datagen and file tools are left out; a 32-bit search id in place of a 64-bit atomic; no Syzygy tablebases; Hash capped at 1024 MB.",
+  "features": [
+    {
+      "key": "Principal_Variation_Search",
+      "label": "PVS",
+      "group": "Search",
+      "implementation": "Principal variation search with iterative deepening and aspiration windows."
+    },
+    {
+      "key": "Reverse_Futility_Pruning",
+      "label": "Reverse Futility Pruning",
+      "group": "Search",
+      "implementation": "Static-eval margin pruning by depth."
+    },
+    {
+      "key": "Razoring",
+      "label": "Razoring",
+      "group": "Search",
+      "implementation": "Quiescence verification when the eval is far below alpha."
+    },
+    {
+      "key": "Null_Move_Pruning",
+      "label": "Null Move Pruning",
+      "group": "Search",
+      "implementation": "Depth- and eval-scaled null-move pruning."
+    },
+    {
+      "key": "ProbCut",
+      "label": "ProbCut",
+      "group": "Search",
+      "implementation": "Capture search against a raised beta."
+    },
+    {
+      "key": "Internal_Iterative_Reductions",
+      "label": "Internal Iterative Reductions",
+      "group": "Search",
+      "implementation": "One ply less without a hash move."
+    },
+    {
+      "key": "Singular_Extensions",
+      "label": "Singular Extensions",
+      "group": "Search",
+      "implementation": "Singular, double and triple extensions."
+    },
+    {
+      "key": "Late_Move_Reductions",
+      "label": "Late Move Reductions",
+      "group": "Search",
+      "implementation": "Reductions adjusted by history and node type."
+    },
+    {
+      "key": "Futility_Pruning#Move_Count_Based_Pruning",
+      "label": "Late-Move & Futility Pruning",
+      "group": "Search",
+      "implementation": "Late-move and futility pruning in the moves loop."
+    },
+    {
+      "key": "Quiescence_Search",
+      "label": "Quiescence Search",
+      "group": "Search",
+      "implementation": "Captures in leaf nodes."
+    },
+    {
+      "key": "History_Heuristic#Continuation_History",
+      "label": "Histories & Correction",
+      "group": "Ordering",
+      "implementation": "Quiet and continuation histories with counter moves, plus correction histories."
+    },
+    {
+      "key": "Transposition_Table",
+      "label": "Transposition Table",
+      "group": "Tables",
+      "implementation": "Clusters of 32 bytes shared by the search."
+    },
+    {
+      "key": "NNUE",
+      "label": "NNUE",
+      "group": "Evaluation",
+      "implementation": "Embedded net: threat, pawn-pair and 16 king-bucketed piece-square inputs, a 768-wide accumulator, then 16, 32 and 1 in 8 output buckets."
+    }
+  ]
+}

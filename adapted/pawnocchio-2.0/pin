@@ -1,0 +1,7 @@
+# pawnocchio 2.0, by Jonathan Hallström
+url=https://github.com/JonathanHallstrom/pawnocchio
+commit=e0ad7b3f7cad0e6ee7477ae0e49cbe302e4b665d
+license=GPL-3.0-or-later
+module=pawnocchio.wasm
+compare=bench
+nodes=2626237
