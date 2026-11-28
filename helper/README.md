@@ -52,6 +52,7 @@ return before it. Each file's header has the rules in full.
 | C, C++ | wasi-sdk's clang with `--target=wasm32-wasip1`; link the helper's object | Link with `-Wl,--wrap=pthread_create`. Set the stack with `-Wl,-z,stack-size=<bytes>`. `-msimd128` turns on SIMD. |
 | Rust | `cargo build --release --target wasm32-wasip1`; copy `uci_wasi.rs` into the crate as a module | Set the stack with `-Clink-arg=-zstack-size=<bytes>`. `-Ctarget-feature=+simd128` turns on SIMD. |
 | Go | `GOOS=wasip1 GOARCH=wasm go build`; copy `uci_wasi.go` into the tree as a package | Nothing traps a `go` statement the edits missed; such a goroutine never runs. |
+| Zig | `zig build -Dtarget=wasm32-wasi -Dcpu=generic+simd128`; compile the C helper's `uci_wasi.c` into the build and declare its calls `extern` | A single-threaded build refuses `std.Thread.spawn` at compile time. Set the stack with the executable's `stack_size`. |
 
 - **`--wrap=pthread_create`** is for the `wasm32-wasip1` target, where a module starts no thread. It sends
   every thread start to a function in the C helper that prints a message and traps. A thread start the edits missed then fails loudly. Without it, wasi-libc's `pthread_create`
@@ -70,11 +71,12 @@ return before it. Each file's header has the rules in full.
 - **A net on x86 intrinsics.** wasi-sdk refuses `immintrin.h`, so the engine builds on its portable path, which
   `-msimd128` lets clang vectorize. Portable vector source, such as Rust's `std::simd`, compiles to 128-bit steps
   as written. For a faster net, compile the engine's SSE path through SIMDe, whose x86 headers lower to
-  `wasm_simd128.h` (Prune 4.0.1, Halogen 16 in `adapted/`). Define the engine's `__SSE*__` macros, and give the engine a
-  shim header that includes SIMDe's `x86/sse4.1.h` in place of `immintrin.h`; SIMDe reads those macros only on
-  an x86 target. Write the shim in `tmp/adapted/<folder>/shim/`, because `tools/package.ts` ships the copyright
-  lines of the SIMDe headers it includes. Measure the result against the portable path, which can be the faster
-  one: against SIMDe's AVX2 emulation (Renegade 1.3.0), and against an SSE path too (Caissa 2.0).
+  `wasm_simd128.h` (Prune 4.0.1, Halogen 16, PlentyChess 8.0.0, Stockfish 19 in `adapted/`). Define the engine's
+  `__SSE*__` macros, and give the engine a shim header that includes SIMDe's `x86/sse4.1.h`, under each x86 header
+  name it includes; SIMDe reads those macros only on an x86 target. Write the shims in
+  `tmp/adapted/<folder>/shim/`, because `tools/package.ts` ships the copyright lines of the SIMDe headers they
+  include. Measure the result against the portable path, which can be the faster one: against SIMDe's AVX2
+  emulation (Renegade 1.3.0), and against an SSE path too (Caissa 2.0).
 - **An engine's paths can search different nodes.** Where its AVX2 and 128-bit paths differ natively, give the
   native build the module's vector width (Prune 4.0.1, `x86-64-v2`).
 - **A net's 128-bit path needs the 128-bit weight layout.** An engine that permutes its weights for AVX2 keeps a
@@ -90,6 +92,8 @@ return before it. Each file's header has the rules in full.
   not a signed `gt`, which is wrong for negative lanes.
 - **Relaxed SIMD** (`-mrelaxed-simd`) is allowed only in its exact form (`docs/uci-over-wasi.md` § Form). The
   module then declares `requires=relaxed-simd`, and its node signature must be equal on x86 and on ARM.
+- **No 64-bit atomics.** wasm32 has them only in the threads proposal, which a module without threads does not use.
+  Zig refuses a 64-bit atomic there at compile time. Where a value is only compared, a 32-bit one does (pawnocchio 2.0).
 - **Sizes have 32 bits.** `size_t`, `long` and Rust's `usize` are 32-bit types in a module. Where a value
   needs 64 bits, name a 64-bit type. A table that is compiled in with 64-bit entries is one such place, and a
   `size_t` shifted right by 32 another: the shift is undefined (Halogen 16's hash index).
