@@ -4,7 +4,7 @@
  * Packages a checked adapted engine build into `<out>/<id>/` with:
  *   <id>.wasm           the WASI module, renamed from `pin`'s `module=` to the folder id
  *   <id>.meta.json      public EngineMeta provenance built by tools/meta.ts
- *   <id>-LICENSE.txt    upstream copyright/license notice (and GPL text for GPL engines)
+ *   <id>-LICENSE.txt    upstream copyright/license notice (and GPL text for GPL engines), then SIMDe's if the build used it
  *   <id>-source.tar.gz  Corresponding Source archive for GPL/LGPL/AGPL engines
  *   SHA256SUMS          sha256 digests for all packaged files
  *
@@ -114,6 +114,25 @@ if (foundLicense) {
   );
 }
 
+// SIMDe's headers compile into the module, so its MIT notice goes with every package of an engine built on them
+const simdeDir = join(workDir, "simde");
+let simdeNotice = "";
+if (existsSync(simdeDir)) {
+  const copying = join(simdeDir, "COPYING");
+  if (!existsSync(copying)) {
+    throw new Error(`${simdeDir} has no COPYING; the folder's fetch.sh must fetch SIMDe's license with its headers`);
+  }
+  simdeNotice = [
+    "",
+    "---",
+    "",
+    "The module contains code compiled from SIMDe (https://github.com/simd-everywhere/simde), under the MIT License:",
+    "",
+    readFileSync(copying, "utf8").trimEnd(),
+    "",
+  ].join("\n");
+}
+
 const licenseHeader = [
   `Engine: ${id}`,
   `Upstream: ${pin.url} (commit ${pin.commit})`,
@@ -148,7 +167,7 @@ packaged.push(wasmName);
 writeFileSync(join(outDir, metaName), metaJson);
 packaged.push(metaName);
 
-writeFileSync(join(outDir, licenseName), `${licenseHeader}${licenseBody.trimEnd()}\n`);
+writeFileSync(join(outDir, licenseName), `${licenseHeader}${licenseBody.trimEnd()}\n${simdeNotice}`);
 packaged.push(licenseName);
 
 // Corresponding Source for GPL/LGPL/AGPL engines: the edited tree, the folder, the helper, and the scripts and
@@ -178,7 +197,7 @@ if (withSource) {
         cpSync(dir, join(stageDir, fetched), { recursive: true });
       }
     }
-    writeFileSync(join(stageDir, "LICENSE.txt"), `${licenseHeader}${licenseBody.trimEnd()}\n`);
+    writeFileSync(join(stageDir, "LICENSE.txt"), `${licenseHeader}${licenseBody.trimEnd()}\n${simdeNotice}`);
     const sourceName = `${id}-source.tar.gz`;
     execFileSync("tar", ["-czf", join(outDir, sourceName), "-C", stageRoot, `${id}-source`], {
       stdio: ["ignore", "pipe", "inherit"],
