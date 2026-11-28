@@ -24,7 +24,8 @@
 # are run in the folder's state, tmp/adapted/<folder>/, so a build finds there what fetch.sh left.
 #
 # A build sees WASI_SDK; CC_WASI and CXX_WASI, its compilers for the module; HELPER, the helper's folder;
-# HELPER_O, the C helper's object; WRAP, the link flag that makes a missed thread start fail; and JOBS. A module
+# HELPER_O, the C helper's object; WRAP, the link flag that makes a missed thread start fail; RUST_NIGHTLY, the
+# folder of the dated nightly Rust, which a build puts on PATH where it needs one; and JOBS. A module
 # with threads (docs/uci-over-wasi.md § Threads) uses CC_WASI_THREADS, CXX_WASI_THREADS, HELPER_O_THREADS and
 # THREADS_LINK, its link flags but the memory's maximum, and no WRAP.
 # The toolchains come from tools/toolchains.sh unless WASI_SDK is already set. State is in tmp/adapted/.

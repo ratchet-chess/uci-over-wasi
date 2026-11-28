@@ -66,6 +66,9 @@ jobs:
           if grep -qE '(^|[[:space:]])cargo[[:space:]]' "adapted/$ENGINE/build.sh" || { [ -f "adapted/$ENGINE/fetch.sh" ] && grep -qE '(^|[[:space:]])cargo[[:space:]]' "adapted/$ENGINE/fetch.sh"; }; then
             need="$need rust"
           fi
+          if grep -q 'RUST_NIGHTLY' "adapted/$ENGINE/build.sh"; then
+            need="$need rust-nightly"
+          fi
           if grep -qE '(^|[[:space:]])go[[:space:]]+build' "adapted/$ENGINE/build.sh"; then
             need="$need go"
           fi

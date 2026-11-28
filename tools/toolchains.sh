@@ -2,11 +2,13 @@
 # The toolchains that build an adapted engine, as tools/toolchains.txt pins them.
 #
 #   tools/toolchains.sh fetch [name...]    downloads each archive and checks its sha256; the one step that needs network
-#   tools/toolchains.sh unpack [name...]   unpacks the archives: wasi-sdk/, rust/ and go/
+#   tools/toolchains.sh unpack [name...]   unpacks the archives: wasi-sdk/, rust/, rust-nightly/ and go/
 #   tools/toolchains.sh env                prints the settings that tools/adapted.sh gives a build
 #
-# A name is wasi-sdk, rust or go; with none, every toolchain. They go in $TOOLCHAINS, default tmp/toolchains.
-# An author with their own toolchains skips this script and sets WASI_SDK, and puts cargo or go on PATH.
+# A name is wasi-sdk, rust, rust-nightly or go; with none, every toolchain. They go in $TOOLCHAINS, default
+# tmp/toolchains. rust-nightly is a dated nightly, for an engine that needs unstable features; a build puts it on PATH
+# from RUST_NIGHTLY. An author with their own toolchains skips this script and sets WASI_SDK, and puts cargo or go
+# on PATH.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 T=${TOOLCHAINS:-$here/tmp/toolchains}
@@ -38,12 +40,12 @@ case "$cmd" in
       # --no-same-owner: as root in a container, tar would give each file the archive's owner, whom the host's user
       # cannot delete
       case "$name" in
-        rust)
+        rust|rust-nightly)
           # a Rust archive holds components, each a tree to put over the others; its installer is not run
-          rm -rf "$T/unpack" && mkdir -p "$T/unpack" "$T/rust"
+          rm -rf "$T/unpack" && mkdir -p "$T/unpack" "$T/$name"
           tar -xzf "$file" -C "$T/unpack" --strip-components=1 --no-same-owner
           while read -r part; do
-            (cd "$T/unpack/$part" && tar -cf - --exclude=./manifest.in .) | tar -xf - -C "$T/rust" --no-same-owner
+            (cd "$T/unpack/$part" && tar -cf - --exclude=./manifest.in .) | tar -xf - -C "$T/$name" --no-same-owner
           done < "$T/unpack/components"
           rm -rf "$T/unpack"
           ;;
@@ -57,6 +59,7 @@ case "$cmd" in
   env)
     echo "export WASI_SDK=$T/wasi-sdk"
     echo "export PATH=$T/rust/bin:$T/go/bin:\$PATH"
+    echo "export RUST_NIGHTLY=$T/rust-nightly"
     ;;
   *) sed -n '2,8p' "$0" >&2; exit 2 ;;
 esac
