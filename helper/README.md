@@ -70,9 +70,11 @@ return before it. Each file's header has the rules in full.
 - **A net on x86 intrinsics.** wasi-sdk refuses `immintrin.h`, so the engine builds on its portable path, which
   `-msimd128` lets clang vectorize. Portable vector source, such as Rust's `std::simd`, compiles to 128-bit steps
   as written. For a faster net, compile the engine's SSE path through SIMDe, whose x86 headers lower to
-  `wasm_simd128.h` (Prune 4.0.1 in `adapted/`). Define the engine's `__SSE*__` macros, and give
-  SIMDe's `x86/sse4.1.h` the name `immintrin.h`; SIMDe reads those macros only on an x86 target. Measure the
-  result against the portable path: SIMDe's AVX2 emulation can be the slower one (Renegade 1.3.0).
+  `wasm_simd128.h` (Prune 4.0.1 in `adapted/`). Define the engine's `__SSE*__` macros, and give the engine a
+  shim header that includes SIMDe's `x86/sse4.1.h` in place of `immintrin.h`; SIMDe reads those macros only on
+  an x86 target. Write the shim in `tmp/adapted/<folder>/shim/`, because `tools/package.ts` ships the copyright
+  lines of the SIMDe headers it includes. Measure the result against the portable path: SIMDe's AVX2 emulation
+  can be the slower one (Renegade 1.3.0).
 - **An engine's paths can search different nodes.** Where its AVX2 and 128-bit paths differ natively, give the
   native build the module's vector width (Prune 4.0.1, `x86-64-v2`).
 - **A net's 128-bit path needs the 128-bit weight layout.** An engine that permutes its weights for AVX2 keeps a

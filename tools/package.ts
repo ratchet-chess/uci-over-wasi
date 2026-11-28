@@ -114,7 +114,25 @@ if (foundLicense) {
   );
 }
 
-// SIMDe's headers compile into the module, so its MIT notice goes with every package of an engine built on them
+/** The distinct lines of every `Copyright:` block in a SIMDe header's license comments. */
+function simdeCopyrights(header: string): string[] {
+  const lines: string[] = [];
+  let inBlock = false;
+  for (const line of readFileSync(header, "utf8").split("\n")) {
+    const text = line.replace(/^\s*\*\s?/, "").trim();
+    if (/^\s*\*\s*Copyright:\s*$/.test(line)) {
+      inBlock = true;
+    } else if (inBlock && /^\s*\*/.test(line) && !line.includes("*/") && text !== "") {
+      if (!lines.includes(text)) lines.push(text);
+    } else {
+      inBlock = false;
+    }
+  }
+  return lines;
+}
+
+// SIMDe's headers compile into the module, so its MIT notice goes with every package of an engine built on them:
+// the project's COPYING, then the copyright lines of the headers that the build's shim/ includes
 const simdeDir = join(workDir, "simde");
 let simdeNotice = "";
 if (existsSync(simdeDir)) {
@@ -122,6 +140,19 @@ if (existsSync(simdeDir)) {
   if (!existsSync(copying)) {
     throw new Error(`${simdeDir} has no COPYING; the folder's fetch.sh must fetch SIMDe's license with its headers`);
   }
+  const shimDir = join(workDir, "shim");
+  const included = existsSync(shimDir)
+    ? readdirSync(shimDir)
+        .filter((name) => name.endsWith(".h"))
+        .flatMap((name) => [...readFileSync(join(shimDir, name), "utf8").matchAll(/#include\s+"([^"]+)"/g)].map((m) => m[1]!))
+        .filter((path) => existsSync(join(simdeDir, path)))
+    : [];
+  if (included.length === 0) {
+    throw new Error(
+      `no shim/*.h in ${workDir} includes a SIMDe header; run tools/adapted.sh check adapted/${id} first, whose build writes it`,
+    );
+  }
+  const holders = [...new Set(included.flatMap((path) => simdeCopyrights(join(simdeDir, path))))];
   simdeNotice = [
     "",
     "---",
@@ -129,6 +160,10 @@ if (existsSync(simdeDir)) {
     "The module contains code compiled from SIMDe (https://github.com/simd-everywhere/simde), under the MIT License:",
     "",
     readFileSync(copying, "utf8").trimEnd(),
+    "",
+    `The SIMDe headers it compiled (${included.join(", ")}) name these copyright holders:`,
+    "",
+    ...holders.map((holder) => `  ${holder}`),
     "",
   ].join("\n");
 }
