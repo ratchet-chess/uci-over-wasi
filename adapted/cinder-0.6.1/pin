@@ -1,0 +1,9 @@
+# Cinder 0.6.1, by Bruno Dutra. Its Cargo.toml states GPL-3.0, which SPDX reads as GPL-3.0-only.
+url=https://github.com/brunocodutra/cinder
+commit=f5d8b06701b059561e70bfb5dfbc98f65d910131
+license=GPL-3.0-only
+module=cinder.wasm
+# Cinder's bench reads its command from standard input, not the command line. Its 50 positions at its depth, each
+# searched from a reset engine, are its bench.
+compare=positions
+go="depth 16"

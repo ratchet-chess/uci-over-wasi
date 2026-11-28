@@ -1,0 +1,420 @@
+diff --git a/bin/cinder.rs b/bin/cinder.rs
+index 1a9d2fd..5c5f604 100644
+--- a/bin/cinder.rs
++++ b/bin/cinder.rs
+@@ -33,6 +33,28 @@ fn main() -> Result<(), Failure> {
+         params.init();
+     }
+ 
++    // UCI over WASI: a module has one thread. The helper reads the UCI lines, and the search hears its input through
++    // the helper's poll.
++    #[cfg(target_os = "wasi")]
++    {
++        let input = futures::StreamExt::fuse(futures::stream::iter(std::iter::from_fn(|| {
++            loop {
++                let line = cinder::uci_wasi::getline()?;
++                match line.trim() {
++                    "" => {}
++                    trimmed => match UciParser.parse(trimmed) {
++                        Err(e) => warn!("ignored uci command, {e}"),
++                        Ok(cmd) => return Some(cmd),
++                    },
++                }
++            }
++        })));
++
++        let mut stdout = stdout().lock();
++        let output = sink((), move |_, o: Outbound| ready(writeln!(stdout, "{o}")));
++        return Ok(block_on(Uci::new(input, output).run())?);
++    }
++
+     let (tx, input) = unbounded();
+ 
+     thread::spawn(move || {
+diff --git a/lib/chess/bitboard.rs b/lib/chess/bitboard.rs
+index fb30b03..f92fe75 100644
+--- a/lib/chess/bitboard.rs
++++ b/lib/chess/bitboard.rs
+@@ -276,6 +276,8 @@ impl<T: MaskElement> BitAnd<Mask<T, 64>> for Bitboard {
+ 
+     #[inline(always)]
+     fn bitand(self, rhs: Mask<T, 64>) -> Self::Output {
++        #[cfg(target_os = "wasi")] // UCI over WASI: M's bitmask, as crate::simd::wasi_bitmask says
++        let rhs = M::from(rhs);
+         Self(self.0.bitand(rhs.to_bitmask()))
+     }
+ }
+@@ -304,6 +306,8 @@ impl<T: MaskElement> BitAndAssign<M<T, 64>> for Bitboard {
+ impl<T: MaskElement> BitAndAssign<Mask<T, 64>> for Bitboard {
+     #[inline(always)]
+     fn bitand_assign(&mut self, rhs: Mask<T, 64>) {
++        #[cfg(target_os = "wasi")] // UCI over WASI: M's bitmask, as crate::simd::wasi_bitmask says
++        let rhs = M::from(rhs);
+         self.0.bitand_assign(rhs.to_bitmask());
+     }
+ }
+@@ -340,6 +344,8 @@ impl<T: MaskElement> BitOr<Mask<T, 64>> for Bitboard {
+ 
+     #[inline(always)]
+     fn bitor(self, rhs: Mask<T, 64>) -> Self::Output {
++        #[cfg(target_os = "wasi")] // UCI over WASI: M's bitmask, as crate::simd::wasi_bitmask says
++        let rhs = M::from(rhs);
+         Self(self.0.bitor(rhs.to_bitmask()))
+     }
+ }
+@@ -368,6 +374,8 @@ impl<T: MaskElement> BitOrAssign<M<T, 64>> for Bitboard {
+ impl<T: MaskElement> BitOrAssign<Mask<T, 64>> for Bitboard {
+     #[inline(always)]
+     fn bitor_assign(&mut self, rhs: Mask<T, 64>) {
++        #[cfg(target_os = "wasi")] // UCI over WASI: M's bitmask, as crate::simd::wasi_bitmask says
++        let rhs = M::from(rhs);
+         self.0.bitor_assign(rhs.to_bitmask());
+     }
+ }
+@@ -404,6 +412,8 @@ impl<T: MaskElement> BitXor<Mask<T, 64>> for Bitboard {
+ 
+     #[inline(always)]
+     fn bitxor(self, rhs: Mask<T, 64>) -> Self::Output {
++        #[cfg(target_os = "wasi")] // UCI over WASI: M's bitmask, as crate::simd::wasi_bitmask says
++        let rhs = M::from(rhs);
+         Self(self.0.bitxor(rhs.to_bitmask()))
+     }
+ }
+@@ -432,6 +442,8 @@ impl<T: MaskElement> BitXorAssign<M<T, 64>> for Bitboard {
+ impl<T: MaskElement> BitXorAssign<Mask<T, 64>> for Bitboard {
+     #[inline(always)]
+     fn bitxor_assign(&mut self, rhs: Mask<T, 64>) {
++        #[cfg(target_os = "wasi")] // UCI over WASI: M's bitmask, as crate::simd::wasi_bitmask says
++        let rhs = M::from(rhs);
+         self.0.bitxor_assign(rhs.to_bitmask());
+     }
+ }
+diff --git a/lib/lib.rs b/lib/lib.rs
+index 69cf91a..30dccc8 100644
+--- a/lib/lib.rs
++++ b/lib/lib.rs
+@@ -263,6 +263,9 @@ pub mod syzygy;
+ pub mod uci;
+ /// Assorted utilities.
+ pub mod util;
++/// UCI over WASI: the poll helper, which owns standard input in a module.
++#[cfg(target_os = "wasi")]
++pub mod uci_wasi;
+ 
+ use std::fmt::Arguments;
+ 
+diff --git a/lib/search/control.rs b/lib/search/control.rs
+index cc1fefa..616df43 100644
+--- a/lib/search/control.rs
++++ b/lib/search/control.rs
+@@ -122,6 +122,18 @@ impl<'a> Active<'a> {
+ 
+         if self.nodes.is_multiple_of(LAP) || ply == 0 {
+             self.elapsed = self.elapsed().as_secs_f32();
++
++            // UCI over WASI: the search runs on the UCI thread, so it hears stop here, at its clock check, and aborts
++            // as the native UCI loop does
++            #[cfg(target_os = "wasi")]
++            {
++                let limits = self.limits();
++                let unbounded =
++                    limits.depth.is_none() && limits.nodes.is_none() && limits.time.is_none() && limits.clock.is_none();
++                if crate::uci_wasi::poll(unbounded) & crate::uci_wasi::STOP != 0 {
++                    self.abort();
++                }
++            }
+         }
+ 
+         self.nodes += 1;
+diff --git a/lib/search/engine.rs b/lib/search/engine.rs
+index ce84b86..91365ad 100644
+--- a/lib/search/engine.rs
++++ b/lib/search/engine.rs
+@@ -1262,6 +1262,9 @@ impl Stream for Search<'_, '_> {
+             }
+ 
+             search.engine.shared.tt.age();
++            // UCI over WASI: whether the search prints its infos itself (Engine::uci_live)
++            #[cfg(target_os = "wasi")]
++            let live = search.engine.uci_live;
+             search.execution = Some(executor.execute(move |idx| {
+                 let local_ctrl = if idx == 0 {
+                     LocalControl::active(ctrl)
+@@ -1273,6 +1276,13 @@ impl Stream for Search<'_, '_> {
+                 let stack = Stack::new(pos.clone(), Pv::empty(Score::drawn()));
+                 for info in Searcher::new(local_ctrl, shared, local, stack).aw(&moves) {
+                     if idx == 0 {
++                        // UCI over WASI: the search runs before the UCI loop reads its stream, so a `go` prints
++                        // each info as the search finds it
++                        #[cfg(target_os = "wasi")]
++                        if live {
++                            println!("{}", crate::uci::Outbound::from(info));
++                        }
++
+                         tx.unbounded_send(info).assume();
+                     }
+                 }
+@@ -1295,6 +1305,9 @@ pub struct Engine {
+     executor: Executor,
+     shared: SharedData,
+     local: HugePages<LocalData>,
++    /// UCI over WASI: the search prints its infos itself, for a `go`
++    #[cfg(target_os = "wasi")]
++    pub uci_live: bool,
+ }
+ 
+ #[cfg(test)]
+@@ -1332,6 +1345,9 @@ impl Engine {
+                 syzygy: Syzygy::new(&options.syzygy),
+                 overhead: options.overhead.into(),
+             },
++            // UCI over WASI: no `go` runs yet
++            #[cfg(target_os = "wasi")]
++            uci_live: false,
+         }
+     }
+ 
+diff --git a/lib/search/executor.rs b/lib/search/executor.rs
+index 60a03cd..4691e0d 100644
+--- a/lib/search/executor.rs
++++ b/lib/search/executor.rs
+@@ -43,6 +43,17 @@ impl Drop for Executor {
+ impl Executor {
+     /// Initializes a broadcast executor with the requested number of threads.
+     pub fn new(threads: ThreadCount) -> Self {
++        // UCI over WASI: a module starts no thread, so `execute` runs the task on the calling thread, as thread 0
++        if cfg!(target_os = "wasi") {
++            return Executor {
++                shared: Arc::new(Shared {
++                    barrier: Barrier::new(1),
++                    engaged: AtomicUsize::new(0),
++                    task: SyncUnsafeCell::new(None),
++                }),
++            };
++        }
++
+         let shared = Arc::new(Shared {
+             barrier: Barrier::new(1 + threads.cast::<usize>()),
+             engaged: AtomicUsize::new(0),
+@@ -75,6 +86,12 @@ impl Executor {
+     /// Executes `f` on every thread.
+     #[inline(always)]
+     pub fn execute<F: Fn(usize) + Send + Sync + 'static>(&mut self, f: F) -> Execution<'_> {
++        // UCI over WASI: the task runs here, and its Execution finishes at once
++        if cfg!(target_os = "wasi") {
++            f(0);
++            return Execution { executor: self };
++        }
++
+         let task = unsafe { self.shared.task.get().as_mut_unchecked() };
+         task.replace(Box::new(f));
+         self.shared.barrier.wait();
+diff --git a/lib/search/options.rs b/lib/search/options.rs
+index 0940429..eae5884 100644
+--- a/lib/search/options.rs
++++ b/lib/search/options.rs
+@@ -20,9 +20,13 @@ const unsafe impl Num for HashSize {
+ 
+     const MIN: Self::Repr = 0;
+ 
+-    #[cfg(not(test))]
++    #[cfg(all(not(test), not(target_os = "wasi")))]
+     const MAX: usize = 1 << 45;
+ 
++    // UCI over WASI: the hash table a module can allocate, in a 32-bit address space
++    #[cfg(all(not(test), target_os = "wasi"))]
++    const MAX: usize = 1 << 30;
++
+     #[cfg(test)]
+     const MAX: usize = 16 << 20;
+ }
+@@ -107,9 +111,13 @@ const unsafe impl Num for ThreadCount {
+ 
+     const MIN: Self::Repr = 1;
+ 
+-    #[cfg(not(test))]
++    #[cfg(all(not(test), not(target_os = "wasi")))]
+     const MAX: Self::Repr = 1 << 12;
+ 
++    // UCI over WASI: a module starts no thread
++    #[cfg(all(not(test), target_os = "wasi"))]
++    const MAX: Self::Repr = 1;
++
+     #[cfg(test)]
+     const MAX: Self::Repr = 4;
+ }
+@@ -247,6 +255,10 @@ impl SyzygyPath {
+ 
+     #[cfg(windows)]
+     const PATH_DELIMITER: &str = ";";
++
++    // UCI over WASI: WASI paths are Unix paths
++    #[cfg(target_os = "wasi")]
++    const PATH_DELIMITER: &str = ":";
+ }
+ 
+ /// The reason why parsing the move overhead failed.
+diff --git a/lib/simd/mask.rs b/lib/simd/mask.rs
+index 06fb923..9b80529 100644
+--- a/lib/simd/mask.rs
++++ b/lib/simd/mask.rs
+@@ -135,6 +135,13 @@ impl<T: MaskElement, const N: usize> M<T, N> {
+         }
+ 
+         #[cfg(not(target_feature = "avx512f"))]
++        #[cfg(target_os = "wasi")]
++        {
++            wasi_bitmask(self.inner)
++        }
++
++        #[cfg(not(target_feature = "avx512f"))]
++        #[cfg(not(target_os = "wasi"))]
+         {
+             self.inner.to_bitmask()
+         }
+@@ -395,3 +402,25 @@ pub type M64x8 = M<i64, 8>;
+ pub type M64x16 = M<i64, 16>;
+ pub type M64x32 = M<i64, 32>;
+ pub type M64x64 = M<i64, 64>;
++
++/// UCI over WASI: the pinned toolchain's WebAssembly SIMD returns the bitmask of a mask with more than 16 lanes with
++/// its 16-lane groups in reverse order, so a module builds that bitmask from 16-lane groups, which it returns right.
++#[cfg(target_os = "wasi")]
++#[inline(always)]
++pub fn wasi_bitmask<T: MaskElement, const N: usize>(mask: Mask<T, N>) -> u64 {
++    if N <= 16 {
++        return mask.to_bitmask();
++    }
++
++    let lanes = mask.to_simd();
++    let lanes = lanes.as_array();
++    let mut bits = 0;
++    let mut group = 0;
++    while group < N {
++        let lanes = Simd::<T, 16>::from_slice(&lanes[group..group + 16]);
++        bits |= unsafe { Mask::<T, 16>::from_simd_unchecked(lanes) }.to_bitmask() << group;
++        group += 16;
++    }
++
++    bits
++}
+diff --git a/lib/uci.rs b/lib/uci.rs
+index 700f900..09e14d7 100644
+--- a/lib/uci.rs
++++ b/lib/uci.rs
+@@ -83,12 +83,22 @@ where
+                         },
+                     };
+ 
++                    // UCI over WASI: the search of a `go` prints its infos itself (Engine::uci_live)
++                    #[cfg(target_os = "wasi")]
++                    {
++                        self.engine.uci_live = true;
++                    }
++
+                     let mut search = self.engine.search(&self.pos, limits);
+                     let mut pinned = unsafe { Pin::new_unchecked(&mut search) };
+ 
+                     loop {
+                         select! {
+                             info = pinned.next() => match info {
++                                // UCI over WASI: the search printed this info as it found it
++                                #[cfg(target_os = "wasi")]
++                                Some(_) => {}
++                                #[cfg(not(target_os = "wasi"))]
+                                 Some(i) => self.output.send(i.into()).await?,
+                                 None => break,
+                             },
+@@ -107,6 +117,12 @@ where
+ 
+                     let info = search.conclude();
+                     let bestmove = info.pv().head();
++
++                    // UCI over WASI: the `go` is done, and a bench prints no infos
++                    #[cfg(target_os = "wasi")]
++                    {
++                        self.engine.uci_live = false;
++                    }
+                     self.output.send(info.into()).await?;
+                     self.output.send(bestmove.into()).await?;
+                 }
+diff --git a/lib/util/memory.rs b/lib/util/memory.rs
+index 4837b0f..d9770d8 100644
+--- a/lib/util/memory.rs
++++ b/lib/util/memory.rs
+@@ -1,6 +1,7 @@
+ use crate::util::{Assume, Unsigned};
+ use bytemuck::{NoUninit, Zeroable, zeroed};
+ use derive_more::with_trait::Debug;
++#[cfg(not(target_os = "wasi"))] // UCI over WASI: memmap2 maps no memory in a module
+ use memmap2::{MmapMut, MmapOptions};
+ use std::ops::{Deref, DerefMut};
+ use std::{marker::ConstParamTy, mem::MaybeUninit, process::abort, ptr, slice};
+@@ -214,7 +215,28 @@ pub struct HugePages<T> {
+     capacity: usize,
+ 
+     #[expect(dead_code)]
++    #[cfg(not(target_os = "wasi"))]
+     mmap: MmapMut,
++
++    // UCI over WASI: the allocation that ZeroedAlloc returns when dropped
++    #[expect(dead_code)]
++    #[cfg(target_os = "wasi")]
++    mmap: ZeroedAlloc,
++}
++
++/// UCI over WASI: memmap2 maps no memory in a module, so [`HugePages`] comes from the allocator, zeroed, and
++/// returns it when dropped.
++#[cfg(target_os = "wasi")]
++#[derive(Debug)]
++struct ZeroedAlloc(*mut u8, std::alloc::Layout);
++
++#[cfg(target_os = "wasi")]
++impl Drop for ZeroedAlloc {
++    fn drop(&mut self) {
++        if self.1.size() > 0 {
++            unsafe { std::alloc::dealloc(self.0, self.1) }
++        }
++    }
+ }
+ 
+ /// Transparent huge page size.
+@@ -233,6 +255,30 @@ impl<T> Memory<T> for HugePages<T> {
+     fn zeroed(capacity: Self::Capacity) -> Self {
+         const { assert!(align_of::<T>() <= THP) }
+ 
++        // UCI over WASI: the allocation comes from the allocator (ZeroedAlloc)
++        #[cfg(target_os = "wasi")]
++        {
++            let layout = std::alloc::Layout::from_size_align(capacity * size_of::<T>(), align_of::<T>().max(64))
++                .unwrap_or_else(|_| abort());
++            let ptr = if layout.size() == 0 {
++                ptr::without_provenance_mut(layout.align())
++            } else {
++                unsafe { std::alloc::alloc_zeroed(layout) }
++            };
++
++            if ptr.is_null() {
++                abort();
++            }
++
++            return HugePages {
++                ptr: ptr.cast(),
++                capacity,
++                mmap: ZeroedAlloc(ptr, layout),
++            };
++        }
++
++        #[cfg(not(target_os = "wasi"))]
++        {
+         let size = (capacity * size_of::<T>() + THP - 1).next_multiple_of(THP);
+ 
+         let mut mmap = MmapOptions::new()
+@@ -252,6 +298,7 @@ impl<T> Memory<T> for HugePages<T> {
+             capacity,
+             mmap,
+         }
++        }
+     }
+ 
+     #[inline(always)]
