@@ -10,3 +10,4 @@ rust-nightly efc323fbf88631f38ca4f31aeefc4aeaef891ef4211be2f33f93051851a78820 ht
 rust-nightly d0a8da5e2e9b2ac3210e0530016aec93e28381afc5a5552dff31d2f3431b1b7b https://static.rust-lang.org/dist/2026-08-16/rust-std-nightly-wasm32-wasip1.tar.gz
 rust-nightly 31727ef3178991e430870e4827b33ff3a55f50c2e6a7062f6987b0a4740bdee0 https://static.rust-lang.org/dist/2026-08-16/rust-std-nightly-x86_64-unknown-linux-gnu.tar.gz
 go ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5 https://go.dev/dl/go1.26.10.linux-amd64.tar.gz
+zig 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00 https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz

@@ -72,6 +72,9 @@ jobs:
           if grep -qE '(^|[[:space:]])go[[:space:]]+build' "adapted/$ENGINE/build.sh"; then
             need="$need go"
           fi
+          if grep -qE '(^|[[:space:]])zig[[:space:]]+build' "adapted/$ENGINE/build.sh"; then
+            need="$need zig"
+          fi
           echo "toolchains=$need" >> "$GITHUB_OUTPUT"
           echo "engine: $ENGINE (toolchains: $need)"
 

@@ -2,13 +2,13 @@
 # The toolchains that build an adapted engine, as tools/toolchains.txt pins them.
 #
 #   tools/toolchains.sh fetch [name...]    downloads each archive and checks its sha256; the one step that needs network
-#   tools/toolchains.sh unpack [name...]   unpacks the archives: wasi-sdk/, rust/, rust-nightly/ and go/
+#   tools/toolchains.sh unpack [name...]   unpacks the archives: wasi-sdk/, rust/, rust-nightly/, go/ and zig/
 #   tools/toolchains.sh env                prints the settings that tools/adapted.sh gives a build
 #
-# A name is wasi-sdk, rust, rust-nightly or go; with none, every toolchain. They go in $TOOLCHAINS, default
+# A name is wasi-sdk, rust, rust-nightly, go or zig; with none, every toolchain. They go in $TOOLCHAINS, default
 # tmp/toolchains. rust-nightly is a dated nightly, for an engine that needs unstable features; a build puts it on PATH
-# from RUST_NIGHTLY. An author with their own toolchains skips this script and sets WASI_SDK, and puts cargo or go
-# on PATH.
+# from RUST_NIGHTLY. An author with their own toolchains skips this script and sets WASI_SDK, and puts cargo, go or
+# zig on PATH.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 T=${TOOLCHAINS:-$here/tmp/toolchains}
@@ -51,14 +51,14 @@ case "$cmd" in
           ;;
         *)
           rm -rf "$T/$name" && mkdir -p "$T/$name"
-          tar -xzf "$file" -C "$T/$name" --strip-components=1 --no-same-owner
+          tar -xf "$file" -C "$T/$name" --strip-components=1 --no-same-owner
           ;;
       esac
     done
     ;;
   env)
     echo "export WASI_SDK=$T/wasi-sdk"
-    echo "export PATH=$T/rust/bin:$T/go/bin:\$PATH"
+    echo "export PATH=$T/rust/bin:$T/go/bin:$T/zig:\$PATH"
     echo "export RUST_NIGHTLY=$T/rust-nightly"
     ;;
   *) sed -n '2,8p' "$0" >&2; exit 2 ;;
